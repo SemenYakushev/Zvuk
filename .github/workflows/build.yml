@@ -99,9 +99,15 @@ jobs:
           if [ "${{ github.ref_type }}" = "tag" ]; then
             echo "TAG_NAME=${{ github.ref_name }}" >> "$GITHUB_ENV"
             echo "RELEASE_NAME=Звук ${{ github.ref_name }}" >> "$GITHUB_ENV"
+            if [ "${{ github.ref_name }}" = "v$VERSION" ]; then
+              echo "PRERELEASE=false" >> "$GITHUB_ENV"
+            else
+              echo "PRERELEASE=true" >> "$GITHUB_ENV"
+            fi
           else
             echo "TAG_NAME=v$VERSION" >> "$GITHUB_ENV"
             echo "RELEASE_NAME=Звук v$VERSION" >> "$GITHUB_ENV"
+            echo "PRERELEASE=false" >> "$GITHUB_ENV"
           fi
 
       - name: Download installers
@@ -117,5 +123,5 @@ jobs:
         with:
           tag_name: ${{ env.TAG_NAME }}
           name: ${{ env.RELEASE_NAME }}
-          prerelease: true
+          prerelease: ${{ env.PRERELEASE }}
           files: download/Zvuk_*
