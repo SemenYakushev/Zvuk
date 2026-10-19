@@ -2027,3 +2027,16 @@ input[type="range"]:hover::-webkit-slider-thumb {
 ::-webkit-scrollbar-track {
   background: transparent;
 }
+
+/* Заглушка для обложек без картинки (или с битым URL).
+   Класс img-stub вешает setImage() в app.js. Правило намеренно стоит в конце
+   файла: у .track-cover / .detail-cover / .player-cover / .queue-row img /
+   .modal-playlist-item img задан шорткат background, который сбрасывает
+   background-image, и при равной специфичности выигрывает тот, кто ниже. */
+img.img-stub {
+  background-image: url('../assets/placeholder.svg');
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 45%;
+  object-fit: contain;
+}

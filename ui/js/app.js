@@ -142,6 +142,29 @@ function playlistImage(p, size) {
   return '';
 }
 
+/* Прозрачный 1x1 GIF: если img.url пустой или загрузка упала, грузим его.
+   Просто убрать атрибут src недостаточно — Blink оставляет поверх иконку
+   «сломанной картинки», а успешная загрузка это состояние сбрасывает. */
+const BLANK_IMG = 'data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==';
+
+/* Единая точка установки обложки: пустой/битый URL → заглушка-нота
+   (см. img.img-stub в style.css). */
+function setImage(img, url) {
+  img.onerror = null;
+  img.classList.remove('img-stub');
+  if (!url) {
+    img.src = BLANK_IMG;
+    img.classList.add('img-stub');
+    return;
+  }
+  img.onerror = () => {
+    img.onerror = null;
+    img.src = BLANK_IMG;
+    img.classList.add('img-stub');
+  };
+  img.src = url;
+}
+
 function shuffle(arr) {
   for (let i = arr.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
@@ -528,7 +551,7 @@ function artistWaveCard(a) {
   if (isArtistActive) card.classList.add('active');
   const img = document.createElement('img');
   img.className = 'card-cover';
-  img.src = a.image ? coverUrl(a.image.src, '300x300') : '';
+  setImage(img, a.image ? coverUrl(a.image.src, '300x300') : '');
   img.alt = '';
   const t = document.createElement('div');
   t.className = 'card-title';
@@ -1046,7 +1069,7 @@ function trackRow(track, index, list, opts = {}) {
 
   const cover = document.createElement('img');
   cover.className = 'track-cover';
-  cover.src = trackImage(track, '84x84');
+  setImage(cover, trackImage(track, '84x84'));
   cover.alt = '';
 
   const main = document.createElement('div');
@@ -1140,7 +1163,7 @@ async function openAddToPlaylist(track) {
       const row = document.createElement('div');
       row.className = 'modal-playlist-item';
       const img = document.createElement('img');
-      img.src = playlistImage(p, '100x100');
+      setImage(img, playlistImage(p, '100x100'));
       img.alt = '';
       const meta = document.createElement('div');
       meta.style.minWidth = '0';
@@ -1286,7 +1309,7 @@ function renderDetail(content, { kind, item }) {
   header.className = 'detail-header';
   const img = document.createElement('img');
   img.className = 'detail-cover';
-  img.src = playlistImage(item, '400x400');
+  setImage(img, playlistImage(item, '400x400'));
   img.alt = '';
   const meta = document.createElement('div');
   meta.className = 'detail-meta';
@@ -1394,7 +1417,7 @@ async function openArtist(id) {
     header.className = 'detail-header';
     const img = document.createElement('img');
     img.className = 'detail-cover';
-    img.src = a.image ? coverUrl(a.image.src, '400x400') : '';
+    setImage(img, a.image ? coverUrl(a.image.src, '400x400') : '');
     img.alt = '';
     const meta = document.createElement('div');
     meta.className = 'detail-meta';
@@ -1467,7 +1490,7 @@ function playlistCard(p) {
   card.className = 'card';
   const img = document.createElement('img');
   img.className = 'card-cover';
-  img.src = playlistImage(p, '300x300');
+  setImage(img, playlistImage(p, '300x300'));
   img.alt = '';
   const t = document.createElement('div');
   t.className = 'card-title';
@@ -1485,7 +1508,7 @@ function releaseCard(r) {
   card.className = 'card';
   const img = document.createElement('img');
   img.className = 'card-cover';
-  img.src = r.image ? coverUrl(r.image.src, '300x300') : '';
+  setImage(img, r.image ? coverUrl(r.image.src, '300x300') : '');
   img.alt = '';
   const t = document.createElement('div');
   t.className = 'card-title';
@@ -1503,7 +1526,7 @@ function artistCard(a) {
   card.className = 'card';
   const img = document.createElement('img');
   img.className = 'card-cover';
-  img.src = a.image ? coverUrl(a.image.src, '300x300') : '';
+  setImage(img, a.image ? coverUrl(a.image.src, '300x300') : '');
   img.alt = '';
   const t = document.createElement('div');
   t.className = 'card-title';
@@ -1648,7 +1671,7 @@ function setupSource(url) {
 
 function updatePlayerUI(track) {
   $('#player').classList.remove('hidden');
-  $('#player-cover').src = trackImage(track, '200x200');
+  setImage($('#player-cover'), trackImage(track, '200x200'));
   $('#player-title').textContent = track.title || '';
   $('#player-artist').textContent = artistString(track);
   syncLikeButtons();
@@ -1927,7 +1950,7 @@ function renderQueue() {
     row.className = 'queue-row';
     if (i === state.queueIndex) row.classList.add('playing');
     const img = document.createElement('img');
-    img.src = trackImage(t, '72x72');
+    setImage(img, trackImage(t, '72x72'));
     img.alt = '';
     const main = document.createElement('div');
     main.className = 'queue-main';
