@@ -34,6 +34,7 @@ const defaultSettings = {
   volume: 80,
   hifi: false,
   discordRpc: true,
+  blockExplicit: false,
   repeat: 'off',
   shuffle: false,
   hotkeys: {
@@ -78,6 +79,7 @@ function restoreLastState() {
     state.queue = d.q;
     state.queueIndex = d.i;
     const track = d.q[d.i];
+    if (isBlocked(track)) return;
     state.currentTrackId = track.id;
     updatePlayerUI(track);
     discordStatus(track, false);
@@ -140,6 +142,22 @@ function playlistImage(p, size) {
     if (src) return src;
   }
   return '';
+}
+
+/* Бейдж «E» — метка ненормативной лексики (поле explicit в API). */
+function makeExplicitBadge() {
+  const badge = document.createElement('span');
+  badge.className = 'explicit-badge';
+  badge.textContent = 'E';
+  badge.title = 'Ненормативная лексика';
+  badge.setAttribute('aria-label', 'Ненормативная лексика');
+  return badge;
+}
+
+/* Настройка «не воспроизводить треки с меткой E» блокирует только запуск:
+   треки остаются в списках, но приглушены и не играют. */
+function isBlocked(track) {
+  return !!(settings.blockExplicit && track && track.explicit);
 }
 
 function shuffle(arr) {
@@ -611,7 +629,7 @@ async function generateSilaQueue() {
     }
   }
 
-  let result = pool;
+  let result = settings.blockExplicit ? pool.filter((t) => !t.explicit) : pool;
 
   const pop = silaVal('sila-pop', 50);
   const likedOnly = result.filter((t) => t._src === 'like');
@@ -708,11 +726,15 @@ async function startArtistWave(artistId, name) {
       toast('У артиста нет доступных треков');
       return;
     }
+    // explicit-треки остаются в волне, но стартуем с первого играбельного
+    const queue = shuffle(tracks);
+    const start = queue.findIndex((t) => !isBlocked(t));
+    if (start < 0) return;
     wave.active = true;
     wave.source = 'artist';
     wave.count = tracks.length;
     wave.name = a.title || name;
-    playQueue(shuffle(tracks), 0);
+    playQueue(queue, start);
     toast(`Волна по артисту: ${name || a.title}`, true);
   } catch (e) {
     toast(String(e));
@@ -724,7 +746,12 @@ function regenerateWave() {
     startSilaWave();
   } else {
     shuffle(state.queue);
-    state.queueIndex = 0;
+    const start = findPlayableIndex(0, 1);
+    if (start === -1) {
+      finishQueue();
+      return;
+    }
+    state.queueIndex = start;
     playCurrent();
   }
 }
@@ -998,6 +1025,35 @@ function renderSettingsContent() {
   dGroup.append(dTitle, dRow);
   body.append(dGroup);
 
+  const cGroup = document.createElement('div');
+  cGroup.className = 'settings-group';
+  const cTitle = document.createElement('div');
+  cTitle.className = 'settings-group-title';
+  cTitle.textContent = 'Контент';
+  const cRow = document.createElement('label');
+  cRow.className = 'switch-row';
+  const cSpan = document.createElement('span');
+  const cSmall = document.createElement('small');
+  cSmall.textContent = '(треки с меткой E)';
+  cSpan.append('Не воспроизводить треки с ненормативной лексикой ', cSmall);
+  const cInput = document.createElement('input');
+  cInput.type = 'checkbox';
+  cInput.id = 'setting-block-explicit';
+  cInput.checked = !!settings.blockExplicit;
+  cInput.addEventListener('change', () => {
+    settings.blockExplicit = cInput.checked;
+    saveSettings();
+    toast(
+      settings.blockExplicit
+        ? 'Треки с меткой E отключены'
+        : 'Треки с меткой E снова доступны',
+      true
+    );
+  });
+  cRow.append(cSpan, cInput);
+  cGroup.append(cTitle, cRow);
+  body.append(cGroup);
+
   const lGroup = document.createElement('div');
   lGroup.className = 'settings-group';
   const logoutBtn = document.createElement('button');
@@ -1051,13 +1107,17 @@ function trackRow(track, index, list, opts = {}) {
 
   const main = document.createElement('div');
   main.className = 'track-main';
+  const titleRow = document.createElement('div');
+  titleRow.className = 'track-title-row';
   const title = document.createElement('div');
   title.className = 'track-title';
   title.textContent = track.title || '';
+  titleRow.append(title);
+  if (track.explicit) titleRow.append(makeExplicitBadge());
   const artist = document.createElement('div');
   artist.className = 'track-artist';
   artist.textContent = artistString(track);
-  main.append(title, artist);
+  main.append(titleRow, artist);
 
   const pl = document.createElement('button');
   pl.className = 'pl-btn';
@@ -1091,7 +1151,17 @@ function trackRow(track, index, list, opts = {}) {
   row.append(indicator, num, cover, main, pl, like, rem || dur);
   if (rem) row.append(dur);
 
-  row.addEventListener('click', () => playQueue(list, index));
+  if (isBlocked(track)) {
+    row.classList.add('blocked');
+    row.title = 'Трек с ненормативной лексикой отключён в настройках';
+  }
+  row.addEventListener('click', () => {
+    if (isBlocked(track)) {
+      toast('Трек с ненормативной лексикой отключён в настройках');
+      return;
+    }
+    playQueue(list, index);
+  });
   pl.addEventListener('click', (e) => {
     e.stopPropagation();
     openAddToPlaylist(track);
@@ -1566,6 +1636,10 @@ function syncLikeButtons() {
 
 async function playQueue(list, index) {
   const track = list[index];
+  if (isBlocked(track)) {
+    toast('Трек с ненормативной лексикой отключён в настройках');
+    return;
+  }
   if (track && state.currentTrackId === track.id) {
     togglePlay();
     return;
@@ -1578,6 +1652,7 @@ async function playQueue(list, index) {
 async function playCurrent() {
   const track = state.queue[state.queueIndex];
   if (!track) return;
+  if (isBlocked(track)) return;
   state.currentTrackId = track.id;
   updatePlayerUI(track);
   discordStatus(track, true);
@@ -1649,7 +1724,13 @@ function setupSource(url) {
 function updatePlayerUI(track) {
   $('#player').classList.remove('hidden');
   $('#player-cover').src = trackImage(track, '200x200');
-  $('#player-title').textContent = track.title || '';
+  const playerTitle = $('#player-title');
+  playerTitle.innerHTML = '';
+  const playerTitleText = document.createElement('span');
+  playerTitleText.className = 'player-title-text';
+  playerTitleText.textContent = track.title || '';
+  playerTitle.append(playerTitleText);
+  if (track.explicit) playerTitle.append(makeExplicitBadge());
   $('#player-artist').textContent = artistString(track);
   syncLikeButtons();
   if (navigator.mediaSession) {
@@ -1682,14 +1763,36 @@ function highlightQueue() {
   });
 }
 
+/* Ближайший трек, который можно запустить: заблокированные (метка E при
+   включённой настройке) пропускаются. */
+function findPlayableIndex(from, dir) {
+  for (let i = from; i >= 0 && i < state.queue.length; i += dir) {
+    if (!isBlocked(state.queue[i])) return i;
+  }
+  return -1;
+}
+
+function finishQueue() {
+  audio.pause();
+  audio.currentTime = 0;
+  updatePlayBtn();
+}
+
 function next() {
   if (!state.queue.length) return;
   if (settings.shuffle && state.queue.length > 1) {
     const prevIdx = state.queueIndex;
-    state.queueIndex = Math.floor(Math.random() * state.queue.length);
-    if (state.queueIndex === prevIdx) {
-      state.queueIndex = (state.queueIndex + 1) % state.queue.length;
+    let idx = Math.floor(Math.random() * state.queue.length);
+    if (idx === prevIdx) idx = (idx + 1) % state.queue.length;
+    if (isBlocked(state.queue[idx])) {
+      const alt = findPlayableIndex(idx + 1, 1);
+      idx = alt !== -1 ? alt : findPlayableIndex(0, 1);
     }
+    if (idx === -1) {
+      finishQueue();
+      return;
+    }
+    state.queueIndex = idx;
     playCurrent();
     return;
   }
@@ -1701,17 +1804,42 @@ function next() {
     }
   }
   if (state.queueIndex < state.queue.length - 1) {
-    state.queueIndex++;
-    playCurrent();
-  } else if (wave.active) {
+    const idx = findPlayableIndex(state.queueIndex + 1, 1);
+    if (idx !== -1) {
+      state.queueIndex = idx;
+      playCurrent();
+      return;
+    }
+    if (wave.active) {
+      regenerateWave();
+      return;
+    }
+    if (settings.repeat === 'all') {
+      const first = findPlayableIndex(0, 1);
+      if (first !== -1) {
+        state.queueIndex = first;
+        playCurrent();
+        return;
+      }
+    }
+    if (settings.blockExplicit) {
+      toast('Дальше только треки с меткой E — они отключены в настройках');
+    }
+    finishQueue();
+    return;
+  }
+  if (wave.active) {
     regenerateWave();
   } else if (settings.repeat === 'all') {
-    state.queueIndex = 0;
-    playCurrent();
+    const first = findPlayableIndex(0, 1);
+    if (first !== -1) {
+      state.queueIndex = first;
+      playCurrent();
+    } else {
+      finishQueue();
+    }
   } else {
-    audio.pause();
-    audio.currentTime = 0;
-    updatePlayBtn();
+    finishQueue();
   }
 }
 
@@ -1721,8 +1849,8 @@ function prev() {
     audio.currentTime = 0;
     return;
   }
-  if (state.queueIndex > 0) state.queueIndex--;
-  else state.queueIndex = 0;
+  const idx = findPlayableIndex(state.queueIndex - 1, -1);
+  state.queueIndex = idx !== -1 ? idx : 0;
   playCurrent();
 }
 
@@ -1742,6 +1870,10 @@ function updatePlayBtn() {
 
 function togglePlay() {
   if (audio.paused) {
+    if (isBlocked(state.queue[state.queueIndex])) {
+      toast('Трек с ненормативной лексикой отключён в настройках');
+      return;
+    }
     audio.play().catch(e => {
       if (e.name !== 'AbortError') {
         toast('Не удалось начать воспроизведение');
@@ -1931,15 +2063,24 @@ function renderQueue() {
     img.alt = '';
     const main = document.createElement('div');
     main.className = 'queue-main';
+    const nameRow = document.createElement('div');
+    nameRow.className = 'queue-name-row';
     const name = document.createElement('div');
     name.className = 'queue-name';
     name.textContent = t.title || '';
+    nameRow.append(name);
+    if (t.explicit) nameRow.append(makeExplicitBadge());
     const artist = document.createElement('div');
     artist.className = 'queue-artist';
     artist.textContent = artistString(t);
-    main.append(name, artist);
+    main.append(nameRow, artist);
     row.append(img, main);
+    if (isBlocked(t)) row.classList.add('blocked');
     row.addEventListener('click', () => {
+      if (isBlocked(t)) {
+        toast('Трек с ненормативной лексикой отключён в настройках');
+        return;
+      }
       if (i === state.queueIndex && !audio.paused) {
         closeQueue();
         return;
