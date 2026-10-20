@@ -1,6 +1,7 @@
 mod api;
 mod commands;
 mod discord;
+mod proxy;
 mod store;
 
 use std::collections::HashMap;
@@ -19,6 +20,8 @@ pub struct AppState {
     pub hide_gen: AtomicU64,
     pub last_activity: AtomicU64,
     pub idle_low: AtomicBool,
+    pub proxy_port: u16,
+    pub proxy_token: String,
 }
 
 pub(crate) fn now_ms() -> u64 {
@@ -29,6 +32,7 @@ pub(crate) fn now_ms() -> u64 {
 }
 
 pub fn run() {
+    let (proxy_port, proxy_token) = proxy::spawn();
     let (discord_tx, discord_rx) = mpsc::channel();
     discord::spawn_worker(discord_rx);
     tauri::Builder::default()
@@ -70,6 +74,8 @@ pub fn run() {
             hide_gen: AtomicU64::new(0),
             last_activity: AtomicU64::new(now_ms()),
             idle_low: AtomicBool::new(false),
+            proxy_port,
+            proxy_token,
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_anonymous_token,
@@ -84,6 +90,7 @@ pub fn run() {
             commands::quick_search,
             commands::search,
             commands::get_stream,
+            commands::stream_proxy,
             commands::get_tracks,
             commands::get_playlists,
             commands::get_releases,
