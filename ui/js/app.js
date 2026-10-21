@@ -641,15 +641,6 @@ async function renderHomeContent() {
       if (!viewIs('home')) return;
       const arts = ((data && data.getArtists) || []).filter((a) => a && a.id);
       aGrid.append(...arts.map(artistWaveCard));
-      
-      setTimeout(() => {
-        document.querySelectorAll('.card').forEach((card, i) => {
-          setTimeout(() => {
-            card.classList.add('visible');
-          }, i * 50 + 50);
-        });
-      }, 100);
-      
     } else {
       const p = document.createElement('div');
       p.className = 'placeholder';
