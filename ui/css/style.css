@@ -2101,6 +2101,68 @@ input[type="range"]:hover::-webkit-slider-thumb {
   cursor: default;
 }
 
+/* ---------- Метка explicit (E) и блокировка таких треков ---------- */
+
+/* Маленький квадрат после названия трека. Стоит в flex-обёртке рядом с
+   текстом, потому что у .track-title / .queue-name / .player-title
+   стоит text-overflow: ellipsis — внутри самого текста бейдж бы обрезался. */
+.explicit-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 15px;
+  height: 15px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text-dim);
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  user-select: none;
+}
+
+.track-title-row,
+.queue-name-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.track-title-row .track-title,
+.queue-name-row .queue-name {
+  min-width: 0;
+}
+
+.player-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.player-title-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Блокировка запуска: строка приглушена, но остаётся в списке.
+   Приглушение через filter, а не opacity: у .track-row есть
+   animation: rowFadeIn forwards, и анимация перебивает opacity. */
+.track-row.blocked,
+.queue-row.blocked {
+  filter: opacity(0.45);
+  cursor: default;
+}
+
+.track-row.blocked:hover,
+.queue-row.blocked:hover {
+  background: transparent;
+  border-color: transparent;
+}
+
 /* Заглушка для обложек без картинки (или с битым URL).
    Класс img-stub вешает setImage() в app.js. Правило намеренно стоит в конце
    файла: у .track-cover / .detail-cover / .player-cover / .queue-row img /
@@ -2111,4 +2173,5 @@ img.img-stub {
   background-repeat: no-repeat;
   background-position: center;
   background-size: 45%;
-  object-fit: contain;}
+  object-fit: contain;
+}
