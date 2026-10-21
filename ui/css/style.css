@@ -2054,6 +2054,53 @@ input[type="range"]:hover::-webkit-slider-thumb {
   background: transparent;
 }
 
+/* ---------- Навигация назад/вперёд ---------- */
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.topbar .search-wrap {
+  flex: 1;
+}
+
+.nav-arrows {
+  display: flex;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.nav-arrow {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text);
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.nav-arrow:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.16);
+}
+
+.nav-arrow:active:not(:disabled) {
+  transform: scale(0.94);
+}
+
+.nav-arrow:disabled {
+  opacity: 0.28;
+  cursor: default;
+}
+
 /* ---------- Метка explicit (E) и блокировка таких треков ---------- */
 
 /* Маленький квадрат после названия трека. Стоит в flex-обёртке рядом с
