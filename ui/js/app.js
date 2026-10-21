@@ -1081,13 +1081,16 @@ async function startArtistWave(artistId, name) {
       toast('У артиста нет доступных треков');
       return;
     }
+    // explicit-треки остаются в волне, но стартуем с первого играбельного
+    const queue = shuffle(tracks);
+    const start = queue.findIndex((t) => !isBlocked(t));
+    if (start < 0) return;
     wave.active = true;
     wave.source = 'artist';
     wave.count = tracks.length;
     wave.name = a.title || name;
-    const queue = shuffle(tracks);
     wave.queue = queue;
-    playQueue(queue, 0);
+    playQueue(queue, start);
     syncWaveCards();
     syncWavePanel();
     invalidateHomeScreen();
@@ -1102,7 +1105,12 @@ function regenerateWave() {
     startSilaWave();
   } else {
     shuffle(state.queue);
-    state.queueIndex = 0;
+    const start = findPlayableIndex(0, 1);
+    if (start === -1) {
+      finishQueue();
+      return;
+    }
+    state.queueIndex = start;
     if (settings.shuffle) buildPlayOrder();
     playCurrent();
     refreshQueueIfOpen();
