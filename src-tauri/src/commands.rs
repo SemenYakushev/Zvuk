@@ -46,6 +46,12 @@ pub async fn verify_session(state: State<'_, AppState>) -> Result<Value, String>
 }
 
 #[tauri::command]
+pub async fn get_profile(state: State<'_, AppState>) -> Result<Value, String> {
+    let api = api_from_state(&state)?;
+    api.profile().await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub fn saved_token_exists(app: AppHandle) -> bool {
     store::load(&app).is_some()
 }
