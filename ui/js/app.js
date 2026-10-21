@@ -16,6 +16,8 @@ const audio = $('#audio');
 
 const state = {
   view: 'search',
+  playOrder: [],
+  orderPos: -1,
   queue: [],
   queueIndex: -1,
   streams: new Map(),
@@ -198,9 +200,11 @@ async function loadMoreTracks() {
   try {
     const data = await invoke('get_similar_tracks', { trackId: lastTrack.id, limit: 5 });
     const newTracks = (data && data.tracks) || [];
+    let changed = false;
     for (const t of newTracks) {
       if (!state.queue.some(q => q.id === t.id)) {
         state.queue.push(t);
+        changed = true;
       }
     }
     while (state.queue.length > MAX_QUEUE + 5) {
@@ -210,7 +214,9 @@ async function loadMoreTracks() {
       } else {
         state.queue.pop();
       }
+      changed = true;
     }
+    if (settings.shuffle && changed) buildPlayOrder();
   } catch (e) {  }
 }
 
@@ -228,6 +234,14 @@ async function loadMoreSilaTracks() {
           state.queue.push(t);
         }
       }
+    }
+  }
+  if (settings.shuffle) {
+    const added = [];
+    for (let i = state.playOrder.length; i < state.queue.length; i++) added.push(i);
+    if (added.length) {
+      shuffle(added);
+      state.playOrder.push(...added);
     }
   }
 }
@@ -637,6 +651,7 @@ async function startSilaWave() {
     state.queue = limitedQueue;
     state.queueIndex = 0;
     state.fullSilaQueue = q;
+    syncPlayOrder();
     wave.active = true;
     wave.source = 'sila';
     wave.count = q.length;
@@ -725,6 +740,7 @@ function regenerateWave() {
   } else {
     shuffle(state.queue);
     state.queueIndex = 0;
+    if (settings.shuffle) buildPlayOrder();
     playCurrent();
   }
 }
@@ -1572,6 +1588,7 @@ async function playQueue(list, index) {
   }
   state.queue = list;
   state.queueIndex = index;
+  syncPlayOrder();
   await playCurrent();
 }
 
@@ -1682,15 +1699,93 @@ function highlightQueue() {
   });
 }
 
+/* ---------- Порядок воспроизведения при shuffle ---------- */
+
+/* Текущий трек — первым, остальные в случайном порядке: «вперёд» проходит
+   всю очередь до конца, «назад» возвращает по тому же порядку. */
+function buildPlayOrder() {
+  const rest = [];
+  for (let i = 0; i < state.queue.length; i++) {
+    if (i !== state.queueIndex) rest.push(i);
+  }
+  if (settings.shuffle) shuffle(rest);
+  else rest.sort((a, b) => a - b);
+  state.playOrder = state.queueIndex >= 0 ? [state.queueIndex, ...rest] : rest;
+  state.orderPos = 0;
+}
+
+/* Новый цикл для repeat all: перемешиваем всю очередь заново. */
+function buildShuffleCycle() {
+  const order = Array.from({ length: state.queue.length }, (_, i) => i);
+  shuffle(order);
+  state.playOrder = order;
+  state.orderPos = -1;
+}
+
+function syncPlayOrder() {
+  if (!settings.shuffle) {
+    state.playOrder = [];
+    state.orderPos = -1;
+    return;
+  }
+  if (state.playOrder.length !== state.queue.length) {
+    buildPlayOrder();
+    return;
+  }
+  const pos = state.playOrder.indexOf(state.queueIndex);
+  if (pos >= 0) state.orderPos = pos;
+  else buildPlayOrder();
+}
+
+/* isBlocked появляется вместе с настройкой E; на чистой main её нет. */
+function isOrderBlocked(track) {
+  return typeof isBlocked === 'function' ? isBlocked(track) : false;
+}
+
+function playableInOrder(from, dir) {
+  for (let pos = from; pos >= 0 && pos < state.playOrder.length; pos += dir) {
+    const idx = state.playOrder[pos];
+    const track = state.queue[idx];
+    if (track && !isOrderBlocked(track)) return { pos, idx };
+  }
+  return null;
+}
+
 function next() {
   if (!state.queue.length) return;
   if (settings.shuffle && state.queue.length > 1) {
-    const prevIdx = state.queueIndex;
-    state.queueIndex = Math.floor(Math.random() * state.queue.length);
-    if (state.queueIndex === prevIdx) {
-      state.queueIndex = (state.queueIndex + 1) % state.queue.length;
+    if (state.playOrder.length !== state.queue.length) buildPlayOrder();
+    if (state.orderPos >= state.playOrder.length - 2) {
+      if (wave.active && wave.source === 'sila') {
+        loadMoreSilaTracks();
+      } else {
+        loadMoreTracks();
+      }
     }
-    playCurrent();
+    const found = playableInOrder(state.orderPos + 1, 1);
+    if (found) {
+      state.orderPos = found.pos;
+      state.queueIndex = found.idx;
+      playCurrent();
+      return;
+    }
+    if (wave.active) {
+      regenerateWave();
+      return;
+    }
+    if (settings.repeat === 'all') {
+      buildShuffleCycle();
+      const first = playableInOrder(0, 1);
+      if (first) {
+        state.orderPos = first.pos;
+        state.queueIndex = first.idx;
+        playCurrent();
+        return;
+      }
+    }
+    audio.pause();
+    audio.currentTime = 0;
+    updatePlayBtn();
     return;
   }
   if (state.queueIndex >= state.queue.length - 2) {
@@ -1718,6 +1813,18 @@ function next() {
 function prev() {
   if (!state.queue.length) return;
   if (audio.currentTime > 3) {
+    audio.currentTime = 0;
+    return;
+  }
+  if (settings.shuffle && state.queue.length > 1) {
+    if (state.playOrder.length !== state.queue.length) buildPlayOrder();
+    const found = playableInOrder(state.orderPos - 1, -1);
+    if (found) {
+      state.orderPos = found.pos;
+      state.queueIndex = found.idx;
+      playCurrent();
+      return;
+    }
     audio.currentTime = 0;
     return;
   }
@@ -1764,6 +1871,11 @@ function toggleShuffle() {
   settings.shuffle = !settings.shuffle;
   saveSettings();
   updateShuffleBtn();
+  if (settings.shuffle) buildPlayOrder();
+  else {
+    state.playOrder = [];
+    state.orderPos = -1;
+  }
 }
 
 function updateRepeatBtn() {
