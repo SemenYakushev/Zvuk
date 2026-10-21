@@ -1060,8 +1060,7 @@ async function startArtistWave(artistId, name) {
       toast('Не удалось загрузить артиста');
       return;
     }
-    // при включённой настройке E не берём explicit-треки в волну
-    const tracks = [...((a.popularTracks || []).filter((t) => t && t.id && !isBlocked(t)))];
+    const tracks = [...((a.popularTracks || []).filter((t) => t && t.id))];
     const rel = (a.relatedArtists || [])[0];
     if (rel && rel.id) {
       try {
@@ -1069,7 +1068,7 @@ async function startArtistWave(artistId, name) {
         const st = (syn && syn.synthesisPlaylistBuild && syn.synthesisPlaylistBuild.tracks) || [];
         const seen = new Set(tracks.map((t) => t.id));
         st.forEach((t) => {
-          if (t && t.id && !seen.has(t.id) && !isBlocked(t)) {
+          if (t && t.id && !seen.has(t.id)) {
             seen.add(t.id);
             tracks.push(t);
           }
@@ -1079,11 +1078,7 @@ async function startArtistWave(artistId, name) {
       }
     }
     if (!tracks.length) {
-      toast(
-        settings.blockExplicit
-          ? 'У артиста нет треков без метки E'
-          : 'У артиста нет доступных треков'
-      );
+      toast('У артиста нет доступных треков');
       return;
     }
     wave.active = true;
