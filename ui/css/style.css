@@ -890,6 +890,7 @@ body {
 
 .card {
   cursor: pointer;
+  position: relative;
   border-radius: var(--radius);
   padding: 12px;
   background: var(--bg-card);
@@ -2026,4 +2027,23 @@ input[type="range"]:hover::-webkit-slider-thumb {
 
 ::-webkit-scrollbar-track {
   background: transparent;
+}
+
+/* ---------- Метка «в моей коллекции» на карточке плейлиста ---------- */
+.card-badge {
+  position: absolute;
+  top: 18px;
+  right: 18px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(10, 12, 18, 0.72);
+  border: var(--glass-border);
+  color: var(--accent);
+  pointer-events: none;
+  backdrop-filter: blur(8px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
 }
