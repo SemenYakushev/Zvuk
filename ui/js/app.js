@@ -3209,6 +3209,9 @@ function renderQueue() {
     list.append(empty);
     return;
   }
+  // после перезапуска playOrder ещё пуст — собираем его перед отрисовкой
+  if (settings.shuffle) syncPlayOrder();
+
   // при shuffle показываем фактический порядок воспроизведения
   const order =
     settings.shuffle && state.playOrder.length === state.queue.length
