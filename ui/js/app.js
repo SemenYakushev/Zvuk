@@ -975,6 +975,7 @@ async function startSilaWave() {
     await playCurrent();  
     syncWaveCards();
     syncWavePanel();
+    invalidateHomeScreen();
   } catch (e) {
     toast(String(e));
   } finally {
@@ -995,6 +996,10 @@ function syncWaveCards() {
 }
 
 /* Приводит панель «Сила звука» в соответствие с состоянием волны. */
+function invalidateHomeScreen() {
+  invalidateNavScreens((e) => e.kind === 'view' && e.view === 'home');
+}
+
 function syncWavePanel() {
   const start = $('#sila-start');
   const reset = $('#sila-reset');
@@ -1020,6 +1025,7 @@ function clearWave() {
   wave.queue = null;
   syncWaveCards();
   syncWavePanel();
+  invalidateHomeScreen();
 }
 
 function resetSila() {
@@ -1029,6 +1035,7 @@ function resetSila() {
   wave.name = null;
   wave.queue = null;
   syncWaveCards();
+  invalidateHomeScreen();
   $('#sila-energy').value = 50;
   $('#sila-mood').value = 50;
   $('#sila-pop').value = 50;
@@ -1086,6 +1093,7 @@ async function startArtistWave(artistId, name) {
     playQueue(queue, start);
     syncWaveCards();
     syncWavePanel();
+    invalidateHomeScreen();
     toast(`Волна по артисту: ${name || a.title}`, true);
   } catch (e) {
     toast(String(e));
@@ -1409,6 +1417,10 @@ function renderSettingsContent() {
   cInput.addEventListener('change', () => {
     settings.blockExplicit = cInput.checked;
     saveSettings();
+    // снимки экранов со списками треков устарели: строки были отрисованы
+    // по прежнему значению настройки
+    invalidateNavScreens((e) => e.nodes && e.nodes.querySelector('.track-row'));
+    if (!$('#queue-panel').classList.contains('hidden')) renderQueue();
     toast(
       settings.blockExplicit
         ? 'Треки с меткой E отключены'
@@ -1766,6 +1778,17 @@ function playlistAccess(item) {
   };
 }
 
+/* Снимки экранов с плейлистами могли устареть: метки в поиске, списки
+   в «Моей музыке» и «Плейлистах», сам открытый плейлист. */
+function refreshPlaylistScreens(id) {
+  invalidateNavScreens(
+    (e) =>
+      (e.kind === 'playlist' && String(e.id) === String(id)) ||
+      (e.kind === 'view' &&
+        (e.view === 'search' || e.view === 'library' || e.view === 'playlists'))
+  );
+}
+
 async function togglePlaylistSaved(access, item, container) {
   const saved = access.saved;
   await invoke(saved ? 'remove_from_collection' : 'add_to_collection', {
@@ -1776,6 +1799,7 @@ async function togglePlaylistSaved(access, item, container) {
   else state.collectionPlaylists.add(access.id);
   toast(saved ? 'Удалено из коллекции' : 'Добавлено в коллекцию', true);
   renderPlaylistActions(container, item);
+  refreshPlaylistScreens(access.id);
 }
 
 /* Рисует кнопки управления плейлистом: свои можно удалить, чужие — сохранить
@@ -1808,8 +1832,11 @@ function renderPlaylistActions(container, item) {
         await invoke('delete_playlist', { id: access.id });
         state.collectionPlaylists.delete(access.id);
         toast('Плейлист удалён', true);
-        showView('playlists');
-        renderContent(loadPlaylistsContent);
+        refreshPlaylistScreens(access.id);
+        dropNavScreens(
+          (e) => e.kind === 'playlist' && String(e.id) === access.id
+        );
+        await replaceCurrent({ kind: 'view', view: 'playlists' });
       } catch (e) {
         del.disabled = false;
         toast(String(e));
