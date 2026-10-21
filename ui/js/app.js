@@ -217,6 +217,7 @@ async function loadMoreTracks() {
       changed = true;
     }
     if (settings.shuffle && changed) buildPlayOrder();
+    if (changed) refreshQueueIfOpen();
   } catch (e) {  }
 }
 
@@ -244,6 +245,7 @@ async function loadMoreSilaTracks() {
       state.playOrder.push(...added);
     }
   }
+  refreshQueueIfOpen();
 }
 
 async function init() {
@@ -652,6 +654,7 @@ async function startSilaWave() {
     state.queueIndex = 0;
     state.fullSilaQueue = q;
     syncPlayOrder();
+    refreshQueueIfOpen();
     wave.active = true;
     wave.source = 'sila';
     wave.count = q.length;
@@ -742,6 +745,7 @@ function regenerateWave() {
     state.queueIndex = 0;
     if (settings.shuffle) buildPlayOrder();
     playCurrent();
+    refreshQueueIfOpen();
   }
 }
 
@@ -1590,6 +1594,7 @@ async function playQueue(list, index) {
   state.queueIndex = index;
   syncPlayOrder();
   await playCurrent();
+  refreshQueueIfOpen();
 }
 
 async function playCurrent() {
@@ -1694,9 +1699,47 @@ function discordStatus(track, playing) {
 
 function highlightQueue() {
   const currentId = state.currentTrackId;
-  document.querySelectorAll('.track-row').forEach((row) => {
+  document.querySelectorAll('.queue-row').forEach((row) => {
     row.classList.toggle('playing', row.dataset.id === currentId);
   });
+  const panel = $('#queue-panel');
+  if (panel && !panel.classList.contains('hidden')) {
+    ensureQueueRowVisible(document.querySelector('.queue-row.playing'));
+  }
+}
+
+/* Прокручивает список так, чтобы строка была видна; если уже видна —
+   ничего не двигает. */
+function ensureQueueRowVisible(row) {
+  const list = $('#queue-list');
+  if (!list || !row) return;
+  const listRect = list.getBoundingClientRect();
+  const rowRect = row.getBoundingClientRect();
+  if (rowRect.top >= listRect.top && rowRect.bottom <= listRect.bottom) return;
+  const delta = rowRect.top + rowRect.height / 2 - (listRect.top + listRect.height / 2);
+  list.scrollTop += delta;
+}
+
+/* При открытии очередь ставится на текущий трек — по возможности по центру. */
+function centerQueueOnCurrent() {
+  const list = $('#queue-list');
+  if (!list) return;
+  const row = list.querySelector('.queue-row.playing');
+  if (!row) return;
+  const listRect = list.getBoundingClientRect();
+  const rowRect = row.getBoundingClientRect();
+  const delta = rowRect.top + rowRect.height / 2 - (listRect.top + listRect.height / 2);
+  const behavior = list.style.scrollBehavior;
+  list.style.scrollBehavior = 'auto';
+  list.scrollTop += delta;
+  list.style.scrollBehavior = behavior;
+}
+
+function refreshQueueIfOpen() {
+  const panel = $('#queue-panel');
+  if (!panel || panel.classList.contains('hidden')) return;
+  renderQueue();
+  centerQueueOnCurrent();
 }
 
 /* ---------- Порядок воспроизведения при shuffle ---------- */
@@ -1780,6 +1823,7 @@ function next() {
         state.orderPos = first.pos;
         state.queueIndex = first.idx;
         playCurrent();
+        refreshQueueIfOpen();
         return;
       }
     }
@@ -1876,6 +1920,7 @@ function toggleShuffle() {
     state.playOrder = [];
     state.orderPos = -1;
   }
+  refreshQueueIfOpen();
 }
 
 function updateRepeatBtn() {
@@ -2018,6 +2063,7 @@ function toggleQueue() {
 function openQueue() {
   renderQueue();
   $('#queue-panel').classList.remove('hidden');
+  centerQueueOnCurrent();
 }
 
 function closeQueue() {
@@ -2034,10 +2080,20 @@ function renderQueue() {
     list.append(empty);
     return;
   }
-  state.queue.forEach((t, i) => {
+  // при shuffle показываем фактический порядок воспроизведения
+  const order =
+    settings.shuffle && state.playOrder.length === state.queue.length
+      ? state.playOrder
+      : state.queue.map((_, i) => i);
+
+  order.forEach((trackIndex) => {
+    const t = state.queue[trackIndex];
+    if (!t) return;
     const row = document.createElement('div');
     row.className = 'queue-row';
-    if (i === state.queueIndex) row.classList.add('playing');
+    row.dataset.id = t.id;
+    row.dataset.index = String(trackIndex);
+    if (trackIndex === state.queueIndex) row.classList.add('playing');
     const img = document.createElement('img');
     img.src = trackImage(t, '72x72');
     img.alt = '';
@@ -2052,11 +2108,11 @@ function renderQueue() {
     main.append(name, artist);
     row.append(img, main);
     row.addEventListener('click', () => {
-      if (i === state.queueIndex && !audio.paused) {
+      if (trackIndex === state.queueIndex && !audio.paused) {
         closeQueue();
         return;
       }
-      playQueue(state.queue, i);
+      playQueue(state.queue, trackIndex);
       closeQueue();
     });
     list.append(row);
