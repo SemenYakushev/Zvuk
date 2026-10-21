@@ -2020,6 +2020,8 @@ input[type="range"]:hover::-webkit-slider-thumb {
   bottom: calc(var(--player-h) + 20px);
   left: 50%;
   transform: translateX(-50%);
+  /* своя анимация без transform: fadeIn двигает по Y и ломает центровку */
+  animation: toastIn 0.18s ease-out;
   background: rgba(22, 26, 38, 0.95);
   backdrop-filter: blur(16px);
   border: var(--glass-border);
@@ -2031,7 +2033,6 @@ input[type="range"]:hover::-webkit-slider-thumb {
   z-index: 50;
   box-shadow: var(--shadow-md), 0 0 20px rgba(0, 0, 0, 0.3);
   max-width: 80vw;
-  animation: fadeIn 0.2s ease-out;
 }
 
 
@@ -2053,6 +2054,7 @@ input[type="range"]:hover::-webkit-slider-thumb {
 ::-webkit-scrollbar-track {
   background: transparent;
 }
+
 
 /* ---------- Навигация назад/вперёд ---------- */
 
@@ -2161,6 +2163,246 @@ input[type="range"]:hover::-webkit-slider-thumb {
 .queue-row.blocked:hover {
   background: transparent;
   border-color: transparent;
+}
+
+/* ---------- Эквалайзер ---------- */
+
+.player-volume {
+  width: auto;
+  gap: 8px;
+}
+
+.player-volume #volume {
+  flex: 0 0 92px;
+  width: 92px;
+}
+
+.player-eq.active {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+/* у .player-btn svg общий оптический сдвиг left: 2px / top: .5px —
+   для иконки эквалайзера он лишний, она и так симметрична */
+#player-eq svg {
+  left: 0;
+  top: 0;
+}
+
+.eq-panel {
+  position: fixed;
+  right: 24px;
+  bottom: calc(var(--player-h) + 32px);
+  width: 470px;
+  max-width: calc(100vw - 48px);
+  background: rgba(18, 21, 31, 0.92);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: var(--glass-border);
+  border-radius: var(--radius-lg);
+  z-index: 46;
+  padding: 18px 20px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  box-shadow: var(--shadow-lg);
+  animation: fadeIn 0.18s ease-out;
+}
+
+.eq-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.eq-title {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.eq-switch {
+  padding: 0;
+  border-top: none;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.eq-preset-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.eq-select {
+  flex: 1;
+  min-width: 0;
+  appearance: none;
+  -webkit-appearance: none;
+  padding: 9px 32px 9px 12px;
+  background-color: rgba(255, 255, 255, 0.05);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M2 4.5l4 4 4-4' fill='none' stroke='%238e96a7' stroke-width='1.6' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  border: var(--glass-border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+  cursor: pointer;
+}
+
+.eq-select option,
+.eq-select optgroup {
+  background: #141824;
+  color: var(--text);
+}
+
+.eq-del {
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  border: var(--glass-border);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-dim);
+  font-size: 12px;
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.eq-del:hover {
+  color: var(--danger);
+  border-color: rgba(255, 77, 109, 0.4);
+}
+
+.eq-sliders {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 6px;
+  padding: 0 2px;
+}
+
+.eq-bands {
+  display: flex;
+  gap: 6px;
+}
+
+/* пропуск между preamp и полосами ровно в один ползунок */
+.eq-gap {
+  width: 26px;
+  flex: 0 0 auto;
+}
+
+.eq-slider {
+  position: relative;
+  width: 26px;
+  height: 148px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+
+/* вертикальный ползунок: горизонтальный input, повёрнутый на -90° */
+.eq-slider input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 138px;
+  height: 4px;
+  margin: 0;
+  flex: none;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.14);
+  transform: rotate(-90deg);
+  outline: none;
+  cursor: pointer;
+}
+
+.eq-slider input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--text);
+  border: none;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.45);
+  transition: background 0.2s ease, box-shadow 0.2s ease;
+}
+
+.eq-slider input[type="range"]:hover::-webkit-slider-thumb {
+  background: var(--accent);
+  box-shadow: 0 0 10px var(--accent);
+}
+
+.eq-value {
+  position: absolute;
+  top: -14px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: rgba(10, 12, 18, 0.92);
+  border: var(--glass-border);
+  color: var(--text);
+  font-size: 10px;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease;
+  z-index: 2;
+}
+
+.eq-slider.show-value .eq-value {
+  opacity: 1;
+}
+
+.eq-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 2px;
+}
+
+.modal-sm {
+  width: 380px;
+}
+
+.eq-save-input {
+  padding: 11px 14px;
+  background: rgba(0, 0, 0, 0.3);
+  border: var(--glass-border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-size: 13px;
+  outline: none;
+  transition: var(--transition);
+}
+
+.eq-save-input:focus {
+  border-color: var(--accent);
+}
+
+.eq-save-error {
+  font-size: 12px;
+  color: var(--danger);
+}
+
+.eq-save-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+
+@keyframes toastIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 /* Заглушка для обложек без картинки (или с битым URL).
