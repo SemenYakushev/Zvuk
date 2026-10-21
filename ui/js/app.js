@@ -16,6 +16,9 @@ const audio = $('#audio');
 
 const state = {
   view: 'search',
+  myUserId: null,
+  isAnonymous: false,
+  collectionPlaylists: new Set(),
   queue: [],
   queueIndex: -1,
   streams: new Map(),
@@ -229,6 +232,7 @@ async function enterApp() {
   } catch (e) {
     
   }
+  await loadPlaylistAccess();
   restoreLastState();
   showView('home');
 }
@@ -428,6 +432,7 @@ async function renderHomeContent() {
 
   try {
     const coll = await invoke('user_collection');
+    rememberCollection(coll);
     const ids = ((coll && coll.collection && coll.collection.artists) || [])
       .map((a) => a.id)
       .filter(Boolean);
@@ -846,7 +851,7 @@ function renderSearchResultsContent(data) {
     const sec = section('Плейлисты', `${playlists.length}`);
     const grid = document.createElement('div');
     grid.className = 'card-grid';
-    grid.append(...playlists.map(playlistCard));
+    grid.append(...playlists.map((p) => playlistCard(p, { badge: true })));
     sec.append(grid);
     content.append(sec);
   }
@@ -859,6 +864,7 @@ async function loadLibraryContent() {
   
   try {
     const [tracksData, coll] = await Promise.all([invoke('user_tracks'), invoke('user_collection')]);
+    rememberCollection(coll);
     const trackIds = ((tracksData && tracksData.collection && tracksData.collection.tracks) || [])
       .map((t) => t.id)
       .filter(Boolean);
@@ -930,6 +936,7 @@ async function loadPlaylistsContent() {
   
   try {
     const pd = await invoke('user_playlists');
+    rememberCollection(pd);
     const ids = ((pd && pd.collection && pd.collection.playlists) || [])
       .map((p) => p.id)
       .filter(Boolean);
@@ -1364,6 +1371,126 @@ function renderPlaceholderContent(icon, text) {
   content.append(p);
 }
 
+/* ---------- Коллекция и права на плейлисты ---------- */
+
+function rememberCollection(data) {
+  const playlists = (data && data.collection && data.collection.playlists) || [];
+  state.collectionPlaylists = new Set(
+    playlists.map((p) => String(p.id)).filter(Boolean)
+  );
+}
+
+/* Профиль и состав коллекции нужны до отрисовки списков: по ним решается,
+   какие кнопки показывать и где ставить метку. */
+async function loadPlaylistAccess() {
+  try {
+    const profile = await invoke('get_profile');
+    state.myUserId = profile && profile.id != null ? String(profile.id) : null;
+    state.isAnonymous = !!(profile && profile.is_anonymous);
+  } catch (e) {
+    // без профиля работаем в безопасном режиме: удаление не предлагаем
+    state.myUserId = null;
+    state.isAnonymous = false;
+  }
+  try {
+    rememberCollection(await invoke('user_collection'));
+  } catch (e) {}
+}
+
+function playlistAccess(item) {
+  const id = String((item && item.id) || '');
+  return {
+    id,
+    own: !!state.myUserId && String((item && item.userId) || '') === state.myUserId,
+    saved: state.collectionPlaylists.has(id),
+    anonymous: state.isAnonymous,
+  };
+}
+
+async function togglePlaylistSaved(access, item, container) {
+  const saved = access.saved;
+  await invoke(saved ? 'remove_from_collection' : 'add_to_collection', {
+    id: access.id,
+    itemType: 'playlist',
+  });
+  if (saved) state.collectionPlaylists.delete(access.id);
+  else state.collectionPlaylists.add(access.id);
+  toast(saved ? 'Удалено из коллекции' : 'Добавлено в коллекцию', true);
+  renderPlaylistActions(container, item);
+}
+
+/* Рисует кнопки управления плейлистом: свои можно удалить, чужие — сохранить
+   в коллекцию или убрать из неё (с подтверждением). */
+function renderPlaylistActions(container, item) {
+  container.innerHTML = '';
+  const access = playlistAccess(item);
+  if (access.anonymous) return;
+
+  if (access.own) {
+    const del = document.createElement('button');
+    del.className = 'btn btn-danger';
+    del.textContent = 'Удалить плейлист';
+    let armed = false;
+    let armTimer = null;
+    del.addEventListener('click', async () => {
+      if (!armed) {
+        armed = true;
+        del.textContent = 'Точно удалить?';
+        clearTimeout(armTimer);
+        armTimer = setTimeout(() => {
+          armed = false;
+          del.textContent = 'Удалить плейлист';
+        }, 3000);
+        return;
+      }
+      clearTimeout(armTimer);
+      del.disabled = true;
+      try {
+        await invoke('delete_playlist', { id: access.id });
+        state.collectionPlaylists.delete(access.id);
+        toast('Плейлист удалён', true);
+        showView('playlists');
+        renderContent(loadPlaylistsContent);
+      } catch (e) {
+        del.disabled = false;
+        toast(String(e));
+      }
+    });
+    container.append(del);
+    return;
+  }
+
+  const btn = document.createElement('button');
+  btn.className = access.saved ? 'btn' : 'btn btn-primary';
+  btn.textContent = access.saved ? 'Убрать из коллекции' : 'Добавить в коллекцию';
+  let armed = false;
+  let armTimer = null;
+  btn.addEventListener('click', async () => {
+    if (access.saved && !armed) {
+      armed = true;
+      btn.textContent = 'Точно убрать?';
+      clearTimeout(armTimer);
+      armTimer = setTimeout(() => {
+        armed = false;
+        btn.textContent = 'Убрать из коллекции';
+      }, 3000);
+      return;
+    }
+    clearTimeout(armTimer);
+    const label = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = '…';
+    try {
+      await togglePlaylistSaved(access, item, container);
+    } catch (e) {
+      btn.disabled = false;
+      btn.textContent = label;
+      toast(String(e));
+    }
+  });
+  container.append(btn);
+}
+
 function renderDetail(content, { kind, item }) {
   content.innerHTML = '';
   const header = document.createElement('div');
@@ -1387,34 +1514,8 @@ function renderDetail(content, { kind, item }) {
   if (kind === 'playlist') {
     const actions = document.createElement('div');
     actions.className = 'detail-actions';
-    const del = document.createElement('button');
-    del.className = 'btn btn-danger';
-    del.textContent = 'Удалить плейлист';
-    let armed = false;
-    let armTimer = null;
-    del.addEventListener('click', async () => {
-      if (!armed) {
-        armed = true;
-        del.textContent = 'Точно удалить?';
-        clearTimeout(armTimer);
-        armTimer = setTimeout(() => {
-          armed = false;
-          del.textContent = 'Удалить плейлист';
-        }, 3000);
-        return;
-      }
-      clearTimeout(armTimer);
-      try {
-        await invoke('delete_playlist', { id: String(item.id) });
-        toast('Плейлист удалён', true);
-        showView('playlists');
-        renderContent(loadPlaylistsContent);
-      } catch (e) {
-        toast(String(e));
-      }
-    });
-    actions.append(del);
-    meta.append(actions);
+    renderPlaylistActions(actions, item);
+    if (actions.childElementCount) meta.append(actions);
   }
   header.append(img, meta);
   content.append(header);
@@ -1429,12 +1530,17 @@ function renderDetail(content, { kind, item }) {
     const url = stream.high || stream.mid || stream.flac;
     if (url) state.streams.set(t.id, url);
   });
+  const access = kind === 'playlist' ? playlistAccess(item) : null;
   const opts =
-    kind === 'playlist' ? { remove: (track) => removeFromPlaylist(item, track) } : {};
+    access && access.own ? { remove: (track) => removeFromPlaylist(item, track) } : {};
   renderTrackList(tracks, content, opts);
 }
 
 async function removeFromPlaylist(playlist, track) {
+  if (!playlistAccess(playlist).own) {
+    toast('Это чужой плейлист');
+    return;
+  }
   const remaining = (playlist.tracks || [])
     .filter((t) => t && t.id && t.id !== track.id)
     .map((t) => ({ type: 'track', item_id: t.id }));
@@ -1546,7 +1652,7 @@ async function openArtist(id) {
 
 
 
-function playlistCard(p) {
+function playlistCard(p, opts = {}) {
   const card = document.createElement('div');
   card.className = 'card';
   const img = document.createElement('img');
@@ -1560,6 +1666,15 @@ function playlistCard(p) {
   sub.className = 'card-sub';
   sub.textContent = p.tracks && p.tracks.length ? `${p.tracks.length} треков` : 'Плейлист';
   card.append(img, t, sub);
+  if (opts.badge && !state.isAnonymous && state.collectionPlaylists.has(String(p.id))) {
+    const badge = document.createElement('span');
+    badge.className = 'card-badge';
+    badge.title = 'В моей коллекции';
+    badge.setAttribute('aria-label', 'В моей коллекции');
+    badge.innerHTML =
+      '<svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor"><path d="M17 3H7a2 2 0 0 0-2 2v16l7-4 7 4V5a2 2 0 0 0-2-2z"/></svg>';
+    card.append(badge);
+  }
   card.addEventListener('click', () => openPlaylist(p.id));
   return card;
 }
