@@ -2763,6 +2763,31 @@ function highlightQueue() {
   }
 }
 
+function prefersReducedMotion() {
+  return !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+}
+
+/* Куда прокрутить список, чтобы текущая строка оказалась по центру. */
+function queueCenterTarget() {
+  const list = $('#queue-list');
+  if (!list) return null;
+  const row = list.querySelector('.queue-row.playing');
+  if (!row) return null;
+  const listRect = list.getBoundingClientRect();
+  const rowRect = row.getBoundingClientRect();
+  const delta = rowRect.top + rowRect.height / 2 - (listRect.top + listRect.height / 2);
+  const max = Math.max(0, list.scrollHeight - list.clientHeight);
+  return Math.min(max, Math.max(0, list.scrollTop + delta));
+}
+
+function scrollQueueTo(top, animate) {
+  const list = $('#queue-list');
+  if (!list || top == null) return;
+  const smooth =
+    animate && !prefersReducedMotion() && window.__queueScrollInstant !== true;
+  list.scrollTo({ top, behavior: smooth ? 'smooth' : 'auto' });
+}
+
 /* Прокручивает список так, чтобы строка была видна; если уже видна —
    ничего не двигает. */
 function ensureQueueRowVisible(row) {
@@ -2772,29 +2797,21 @@ function ensureQueueRowVisible(row) {
   const rowRect = row.getBoundingClientRect();
   if (rowRect.top >= listRect.top && rowRect.bottom <= listRect.bottom) return;
   const delta = rowRect.top + rowRect.height / 2 - (listRect.top + listRect.height / 2);
-  list.scrollTop += delta;
+  const max = Math.max(0, list.scrollHeight - list.clientHeight);
+  scrollQueueTo(Math.min(max, Math.max(0, list.scrollTop + delta)), true);
 }
 
-/* При открытии очередь ставится на текущий трек — по возможности по центру. */
-function centerQueueOnCurrent() {
-  const list = $('#queue-list');
-  if (!list) return;
-  const row = list.querySelector('.queue-row.playing');
-  if (!row) return;
-  const listRect = list.getBoundingClientRect();
-  const rowRect = row.getBoundingClientRect();
-  const delta = rowRect.top + rowRect.height / 2 - (listRect.top + listRect.height / 2);
-  const behavior = list.style.scrollBehavior;
-  list.style.scrollBehavior = 'auto';
-  list.scrollTop += delta;
-  list.style.scrollBehavior = behavior;
+/* При открытии очередь плавно ставится на текущий трек — по центру. */
+function centerQueueOnCurrent(animate = true) {
+  scrollQueueTo(queueCenterTarget(), animate);
 }
 
 function refreshQueueIfOpen() {
   const panel = $('#queue-panel');
   if (!panel || panel.classList.contains('hidden')) return;
   renderQueue();
-  centerQueueOnCurrent();
+  // список только что пересобран — прыжок от нуля к центру выглядел бы рывком
+  centerQueueOnCurrent(false);
 }
 
 /* Ближайший трек, который можно запустить: заблокированные (метка E при
