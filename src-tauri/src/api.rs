@@ -208,6 +208,21 @@ impl ZvukApi {
         .await
     }
 
+    /// Профиль текущего пользователя: `id` и `is_anonymous`.
+    pub async fn profile(&self) -> Result<Value, ApiError> {
+        let resp = self
+            .http
+            .get(format!("{TINY_URL}/profile"))
+            .header("X-Auth-Token", &self.token)
+            .send()
+            .await?;
+        let status = resp.status();
+        let body: Value = resp.json().await?;
+        body.get("result").cloned().ok_or_else(|| {
+            ApiError::Other(format!("Не удалось получить профиль (HTTP {status})"))
+        })
+    }
+
     pub async fn verify(&self) -> Result<Value, ApiError> {
         match self.user_collection().await {
             Ok(v) => Ok(v),
@@ -480,6 +495,7 @@ const GET_PLAYLISTS: &str = r#"query GetPlaylists($ids: [ID!]!) {
     description
     image { src palette paletteBottom }
     isPublic
+    userId
     duration
     tracks {
       id

@@ -75,6 +75,7 @@ pub fn run() {
             commands::get_anonymous_token,
             commands::set_token,
             commands::verify_session,
+            commands::get_profile,
             commands::saved_token_exists,
             commands::clear_token,
             commands::open_token_page,
