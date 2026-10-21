@@ -27,7 +27,7 @@ const state = {
   fullSilaQueue: [],
 };
 
-const wave = { active: false, source: null, count: 0, name: null };
+const wave = { active: false, source: null, count: 0, name: null, queue: null };
 let hls = null;
 
 const MAX_QUEUE = 10;
@@ -803,6 +803,7 @@ function silaSlider(id, label, low, high, value) {
 function artistWaveCard(a) {
   const card = document.createElement('div');
   card.className = 'card artist-wave-card';
+  card.dataset.artistTitle = a.title || '';
   const isArtistActive = wave.active && wave.source === 'artist' && wave.name === a.title;
   if (isArtistActive) card.classList.add('active');
   const img = document.createElement('img');
@@ -916,16 +917,14 @@ async function startSilaWave() {
     state.queue = limitedQueue;
     state.queueIndex = 0;
     state.fullSilaQueue = q;
+    wave.queue = limitedQueue;
     wave.active = true;
     wave.source = 'sila';
     wave.count = q.length;
     wave.name = null;
     await playCurrent();  
-    const status = document.getElementById('sila-status');
-    if (status) status.innerHTML = `Волна играет · <b>${q.length} треков</b>`;
-    if (btn) btn.textContent = 'Перезапустить волну';
-    const reset = document.getElementById('sila-reset');
-    if (reset) reset.classList.remove('hidden');
+    syncWaveCards();
+    syncWavePanel();
   } catch (e) {
     toast(String(e));
   } finally {
@@ -933,11 +932,53 @@ async function startSilaWave() {
   }
 }
 
+/* Обновляет рамку и подпись у карточек волн на текущем экране, не
+   перерисовывая «Главное» целиком. */
+function syncWaveCards() {
+  document.querySelectorAll('.artist-wave-card').forEach((card) => {
+    const title = card.dataset.artistTitle || '';
+    const active = wave.active && wave.source === 'artist' && wave.name === title;
+    card.classList.toggle('active', active);
+    const sub = card.querySelector('.card-sub');
+    if (sub) sub.textContent = active ? `Волна играет · ${wave.count} треков` : 'Артист';
+  });
+}
+
+/* Приводит панель «Сила звука» в соответствие с состоянием волны. */
+function syncWavePanel() {
+  const start = $('#sila-start');
+  const reset = $('#sila-reset');
+  const status = $('#sila-status');
+  if (start) {
+    start.textContent =
+      wave.active && wave.source === 'sila' ? 'Перезапустить волну' : 'Запустить волну';
+  }
+  if (reset) reset.classList.toggle('hidden', !wave.active);
+  if (status) {
+    status.innerHTML = wave.active ? `Волна играет · <b>${wave.count} треков</b>` : '';
+  }
+}
+
+/* Останавливает волну, когда пользователь запускает другой список треков.
+   Ползунки и жанры «Силы звука» не трогаем — только состояние волны. */
+function clearWave() {
+  if (!wave.active) return;
+  wave.active = false;
+  wave.source = null;
+  wave.count = 0;
+  wave.name = null;
+  wave.queue = null;
+  syncWaveCards();
+  syncWavePanel();
+}
+
 function resetSila() {
   wave.active = false;
   wave.source = null;
   wave.count = 0;
   wave.name = null;
+  wave.queue = null;
+  syncWaveCards();
   $('#sila-energy').value = 50;
   $('#sila-mood').value = 50;
   $('#sila-pop').value = 50;
@@ -947,11 +988,7 @@ function resetSila() {
   state.silaGenres = [];
   state.fullSilaQueue = [];
   document.querySelectorAll('.chip.on').forEach((c) => c.classList.remove('on'));
-  const start = $('#sila-start');
-  if (start) start.textContent = 'Запустить волну';
-  $('#sila-reset').classList.add('hidden');
-  const status = $('#sila-status');
-  if (status) status.innerHTML = '';
+  syncWavePanel();
 }
 
 async function startArtistWave(artistId, name) {
@@ -991,7 +1028,11 @@ async function startArtistWave(artistId, name) {
     wave.source = 'artist';
     wave.count = tracks.length;
     wave.name = a.title || name;
-    playQueue(shuffle(tracks), 0);
+    const queue = shuffle(tracks);
+    wave.queue = queue;
+    playQueue(queue, 0);
+    syncWaveCards();
+    syncWavePanel();
     toast(`Волна по артисту: ${name || a.title}`, true);
   } catch (e) {
     toast(String(e));
@@ -1936,6 +1977,8 @@ async function playQueue(list, index) {
     togglePlay();
     return;
   }
+  // волна живёт, только пока играет её собственная очередь
+  if (wave.active && wave.queue !== list) clearWave();
   state.queue = list;
   state.queueIndex = index;
   await playCurrent();
