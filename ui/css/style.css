@@ -2183,7 +2183,7 @@ input[type="range"]:hover::-webkit-slider-thumb {
 }
 
 /* вертикальный ползунок: горизонтальный input, повёрнутый на -90°.
-   Заливка идёт от центра (0 дБ); --eq-from/--eq-to выставляет JS. */
+   Заливка растёт от низа (−12 дБ) до ползунка; --eq-progress выставляет JS. */
 .eq-slider input[type="range"] {
   -webkit-appearance: none;
   appearance: none;
@@ -2194,26 +2194,15 @@ input[type="range"]:hover::-webkit-slider-thumb {
   border-radius: 2px;
   outline: none;
   cursor: pointer;
-  --eq-from: 50%;
-  --eq-to: 50%;
-  --eq-start: var(--accent-purple);
-  --eq-end: var(--accent);
+  --eq-progress: 50%;
   background: linear-gradient(
     to right,
-    rgba(255, 255, 255, 0.12) 0 var(--eq-from),
-    var(--eq-start) var(--eq-from),
-    var(--eq-end) var(--eq-to),
-    rgba(255, 255, 255, 0.12) var(--eq-to)
+    var(--accent-purple) 0%,
+    var(--accent) var(--eq-progress),
+    rgba(255, 255, 255, 0.12) var(--eq-progress)
   );
   transform: rotate(-90deg);
   transition: var(--transition);
-}
-
-/* срез: заливка идёт от центра вниз, поэтому цвета меняются местами —
-   акцент всегда на стороне ползунка, как у громкости */
-.eq-slider input[type="range"][data-eq-sign="down"] {
-  --eq-start: var(--accent);
-  --eq-end: var(--accent-purple);
 }
 
 .eq-slider input[type="range"]::-webkit-slider-runnable-track {
