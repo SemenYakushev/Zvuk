@@ -1858,6 +1858,19 @@ function clampEq(value) {
   return Math.max(EQ_MIN, Math.min(EQ_MAX, Math.round(n * 2) / 2));
 }
 
+/* Заливка ползунка от центра (0 дБ): буст растёт вверх, срез — вниз.
+   Цвета и толщина — как у ползунка громкости. */
+function setEqFill(input, value) {
+  if (!input) return;
+  const v = clampEq(value);
+  const toPercent = (n) => ((n - EQ_MIN) / (EQ_MAX - EQ_MIN)) * 100;
+  const center = toPercent(0);
+  const pos = toPercent(v);
+  input.dataset.eqSign = v < 0 ? 'down' : 'up';
+  input.style.setProperty('--eq-from', (v >= 0 ? center : pos) + '%');
+  input.style.setProperty('--eq-to', (v >= 0 ? pos : center) + '%');
+}
+
 function normalizeBands(bands) {
   return EQ_FREQS.map((_, i) => clampEq(Array.isArray(bands) ? bands[i] : 0));
 }
@@ -2060,9 +2073,14 @@ function syncEqUI() {
   if (enabled) enabled.checked = !!eq.enabled;
   renderEqPresetOptions();
   const preamp = $('#eq-preamp');
-  if (preamp) preamp.value = String(clampEq(eq.preamp));
+  if (preamp) {
+    preamp.value = String(clampEq(eq.preamp));
+    setEqFill(preamp, eq.preamp);
+  }
   document.querySelectorAll('#eq-bands input[type="range"]').forEach((input) => {
-    input.value = String(clampEq(eq.bands[Number(input.dataset.band)]));
+    const value = clampEq(eq.bands[Number(input.dataset.band)]);
+    input.value = String(value);
+    setEqFill(input, value);
   });
   updateEqDeleteBtn();
   updateEqSaveBtn();
@@ -2087,13 +2105,16 @@ function buildEqSliders() {
     input.value = String(clampEq(settings.eq.bands[index]));
     input.title = EQ_BAND_NAMES[index];
     input.setAttribute('aria-label', EQ_BAND_NAMES[index]);
+    input.setAttribute('aria-orientation', 'vertical');
     input.dataset.band = String(index);
+    setEqFill(input, settings.eq.bands[index]);
     input.addEventListener('input', () => {
       settings.eq.bands[index] = clampEq(Number(input.value));
       markEqCustom();
       saveSettings();
       applyEqValues();
       updateEqSaveBtn();
+      setEqFill(input, settings.eq.bands[index]);
       showEqValue(wrap, settings.eq.bands[index]);
     });
     wrap.append(bubble, input);
@@ -2247,6 +2268,7 @@ function initEq() {
     saveSettings();
     applyEqValues();
     updateEqSaveBtn();
+    setEqFill($('#eq-preamp'), settings.eq.preamp);
     showEqValue($('#eq-preamp-wrap'), settings.eq.preamp);
   });
 
