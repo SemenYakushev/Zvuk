@@ -1858,17 +1858,13 @@ function clampEq(value) {
   return Math.max(EQ_MIN, Math.min(EQ_MAX, Math.round(n * 2) / 2));
 }
 
-/* Заливка ползунка от центра (0 дБ): буст растёт вверх, срез — вниз.
-   Цвета и толщина — как у ползунка громкости. */
+/* Заливка растёт от нижнего края (−12 дБ) до ползунка —
+   как у громкости, только вертикально. */
 function setEqFill(input, value) {
   if (!input) return;
   const v = clampEq(value);
-  const toPercent = (n) => ((n - EQ_MIN) / (EQ_MAX - EQ_MIN)) * 100;
-  const center = toPercent(0);
-  const pos = toPercent(v);
-  input.dataset.eqSign = v < 0 ? 'down' : 'up';
-  input.style.setProperty('--eq-from', (v >= 0 ? center : pos) + '%');
-  input.style.setProperty('--eq-to', (v >= 0 ? pos : center) + '%');
+  const percent = ((v - EQ_MIN) / (EQ_MAX - EQ_MIN)) * 100;
+  input.style.setProperty('--eq-progress', percent + '%');
 }
 
 function normalizeBands(bands) {
