@@ -2169,7 +2169,21 @@ input[type="range"]:hover::-webkit-slider-thumb {
   flex: 0 0 auto;
 }
 
-/* вертикальный ползунок: горизонтальный input, повёрнутый на -90° */
+/* риска 0 дБ по центру дорожки */
+.eq-slider::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 11px;
+  height: 1px;
+  transform: translate(-50%, -50%);
+  background: rgba(255, 255, 255, 0.22);
+  pointer-events: none;
+}
+
+/* вертикальный ползунок: горизонтальный input, повёрнутый на -90°.
+   Заливка идёт от центра (0 дБ); --eq-from/--eq-to выставляет JS. */
 .eq-slider input[type="range"] {
   -webkit-appearance: none;
   appearance: none;
@@ -2178,27 +2192,77 @@ input[type="range"]:hover::-webkit-slider-thumb {
   margin: 0;
   flex: none;
   border-radius: 2px;
-  background: rgba(255, 255, 255, 0.14);
-  transform: rotate(-90deg);
   outline: none;
   cursor: pointer;
+  --eq-from: 50%;
+  --eq-to: 50%;
+  --eq-start: var(--accent-purple);
+  --eq-end: var(--accent);
+  background: linear-gradient(
+    to right,
+    rgba(255, 255, 255, 0.12) 0 var(--eq-from),
+    var(--eq-start) var(--eq-from),
+    var(--eq-end) var(--eq-to),
+    rgba(255, 255, 255, 0.12) var(--eq-to)
+  );
+  transform: rotate(-90deg);
+  transition: var(--transition);
+}
+
+/* срез: заливка идёт от центра вниз, поэтому цвета меняются местами —
+   акцент всегда на стороне ползунка, как у громкости */
+.eq-slider input[type="range"][data-eq-sign="down"] {
+  --eq-start: var(--accent);
+  --eq-end: var(--accent-purple);
+}
+
+.eq-slider input[type="range"]::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 2px;
+  background: transparent;
 }
 
 .eq-slider input[type="range"]::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
-  width: 14px;
-  height: 14px;
+  width: 12px;
+  height: 12px;
   border-radius: 50%;
   background: var(--text);
   border: none;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.45);
-  transition: background 0.2s ease, box-shadow 0.2s ease;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+  transition: var(--transition);
+  cursor: pointer;
+  position: relative;
+  z-index: 2;
+  margin-top: -4px;
 }
 
 .eq-slider input[type="range"]:hover::-webkit-slider-thumb {
   background: var(--accent);
+  transform: scale(1.2);
   box-shadow: 0 0 10px var(--accent);
+}
+
+.eq-slider input[type="range"]::-moz-range-track {
+  height: 4px;
+  border-radius: 2px;
+  background: transparent;
+  border: none;
+}
+
+.eq-slider input[type="range"]::-moz-range-progress {
+  background: transparent;
+}
+
+.eq-slider input[type="range"]::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--text);
+  border: none;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+  cursor: pointer;
 }
 
 .eq-value {
