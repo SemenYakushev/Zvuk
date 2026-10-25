@@ -40,6 +40,13 @@ const defaultSettings = {
   blockExplicit: false,
   repeat: 'off',
   shuffle: false,
+  eq: {
+    enabled: false,
+    preset: 'flat',
+    preamp: 0,
+    bands: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    custom: {},
+  },
   hotkeys: {
     playPause: null,
     prev: null,
@@ -54,7 +61,22 @@ function loadSettings() {
     for (const k of Object.keys(hotkeys)) {
       if (!(k in defaultSettings.hotkeys)) delete hotkeys[k];
     }
-    return { ...defaultSettings, ...raw, hotkeys };
+    // eq вложенный — сливаем отдельно и чиним значения от старых версий
+    const eqRaw = raw.eq && typeof raw.eq === 'object' ? raw.eq : {};
+    const eq = {
+      ...defaultSettings.eq,
+      ...eqRaw,
+      bands: defaultSettings.eq.bands.map((zero, i) => {
+        const v = Number(Array.isArray(eqRaw.bands) ? eqRaw.bands[i] : zero);
+        if (!isFinite(v)) return 0;
+        return Math.max(-12, Math.min(12, v));
+      }),
+      custom:
+        eqRaw.custom && typeof eqRaw.custom === 'object' && !Array.isArray(eqRaw.custom)
+          ? eqRaw.custom
+          : {},
+    };
+    return { ...defaultSettings, ...raw, hotkeys, eq };
   } catch {
     return JSON.parse(JSON.stringify(defaultSettings));
   }
@@ -205,6 +227,11 @@ function markActive(view) {
 let toastTimer;
 function toast(msg, ok = false) {
   const el = $('#toast');
+  // по центру кнопки play/pause, а не окна: плеер сдвинут из-за ширины
+  // блока трека и громкости
+  const play = $('#btn-play');
+  const rect = play ? play.getBoundingClientRect() : null;
+  el.style.left = rect && rect.width ? `${rect.left + rect.width / 2}px` : '50%';
   el.textContent = msg;
   el.style.color = ok ? 'var(--accent)' : 'var(--text)';
   el.classList.remove('hidden');
@@ -1734,7 +1761,7 @@ async function playQueue(list, index) {
   refreshQueueIfOpen();
 }
 
-async function playCurrent() {
+async function playCurrent(opts = {}) {
   const track = state.queue[state.queueIndex];
   if (!track) return;
   if (isBlocked(track)) return;
@@ -1763,9 +1790,32 @@ async function playCurrent() {
     toast('Не удалось получить поток трека');
     return;
   }
+
+  // Web Audio требует CORS, а CDN его не отдаёт — заворачиваем прямые
+  // ссылки в локальный прокси. HLS идёт через MSE (blob) и не нуждается.
+  const isHls = /\.m3u8($|\?)/i.test(url);
+  if (!isHls && (settings.eq.enabled || audioCtx)) {
+    try {
+      url = await invoke('stream_proxy', { url });
+    } catch (e) {
+      toast('Эквалайзер недоступен: ' + String(e));
+    }
+  }
+
   setupSource(url);
-  
-  if (audio.paused) {
+  ensureEqActive();
+
+  if (opts.position) {
+    const seek = () => {
+      try {
+        audio.currentTime = Math.min(opts.position, audio.duration || opts.position);
+      } catch (e) {}
+    };
+    if (audio.readyState >= 1) seek();
+    else audio.addEventListener('loadedmetadata', seek, { once: true });
+  }
+
+  if (audio.paused && opts.autoplay !== false) {
     try {
       await audio.play();
     } catch (e) {
@@ -1783,6 +1833,14 @@ function setupSource(url) {
     hls = null;
   }
   audio.pause();
+  // Эквалайзеру нужен CORS-источник, поэтому такие ссылки идут через
+  // локальный прокси. Обычное воспроизведение — без crossOrigin: CDN не
+  // отдаёт CORS для подписанных ссылок, и браузер отклоняет такой ответ.
+  if (/^http:\/\/127\.0\.0\.1:\d+\//.test(url)) {
+    audio.crossOrigin = 'anonymous';
+  } else {
+    audio.removeAttribute('crossorigin');
+  }
   audio.removeAttribute('src');
   audio.load();
   state.sourceReady = false;
@@ -1829,6 +1887,464 @@ function updatePlayerUI(track) {
       artwork: art ? [{ src: art, sizes: '512x512', type: 'image/jpeg' }] : [],
     });
   }
+}
+
+
+/* ============================== Эквалайзер ==============================
+   Граф: <audio> → MediaElementSource → Gain(preamp) → 10×BiquadFilter → output.
+   MediaElementSource создаётся один раз (ограничение Web Audio), поэтому при
+   выключенном эквалайзере источник подключается прямо к destination. */
+const EQ_FREQS = [32, 64, 125, 250, 500, 1000, 2000, 4000, 8000, 16000];
+const EQ_BAND_NAMES = ['32 Гц', '64 Гц', '125 Гц', '250 Гц', '500 Гц', '1 кГц', '2 кГц', '4 кГц', '8 кГц', '16 кГц'];
+const EQ_MIN = -12;
+const EQ_MAX = 12;
+const EQ_Q = 1.41;
+const EQ_CUSTOM = '__custom__';
+
+const EQ_PRESETS = {
+  flat:      { title: 'Плоский',     preamp: 0,  bands: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0] },
+  bass:      { title: 'Бас',         preamp: -4, bands: [6, 5, 4, 2, 0, 0, 0, 0, 0, 0] },
+  vocal:     { title: 'Вокал',       preamp: -3, bands: [-2, -1, 0, 2, 4, 4, 3, 1, 0, -1] },
+  rock:      { title: 'Рок',         preamp: -4, bands: [5, 4, 3, 1, -1, -1, 0, 2, 3, 4] },
+  pop:       { title: 'Поп',         preamp: -3, bands: [-1, 0, 2, 4, 4, 2, 0, -1, -1, -1] },
+  jazz:      { title: 'Джаз',        preamp: -3, bands: [3, 2, 1, 2, -1, -1, 0, 1, 2, 3] },
+  electro:   { title: 'Электроника', preamp: -4, bands: [5, 4, 1, 0, -2, 2, 1, 1, 4, 5] },
+  acoustic:  { title: 'Акустика',    preamp: -3, bands: [4, 3, 2, 1, 2, 2, 3, 3, 2, 1] },
+  loudness:  { title: 'Громкость',   preamp: -5, bands: [6, 4, 0, -2, -3, -1, 2, 4, 5, 6] },
+};
+
+let audioCtx = null;
+let eqSource = null;
+let eqPreampNode = null;
+let eqFilters = [];
+let eqValueTimer = null;
+let eqSaveConfirm = '';
+
+function clampEq(value) {
+  const n = Number(value);
+  if (!isFinite(n)) return 0;
+  return Math.max(EQ_MIN, Math.min(EQ_MAX, Math.round(n * 2) / 2));
+}
+
+/* Заливка растёт от нижнего края (−12 дБ) до ползунка —
+   как у громкости, только вертикально. */
+function setEqFill(input, value) {
+  if (!input) return;
+  const v = clampEq(value);
+  const percent = ((v - EQ_MIN) / (EQ_MAX - EQ_MIN)) * 100;
+  input.style.setProperty('--eq-progress', percent + '%');
+}
+
+function normalizeBands(bands) {
+  return EQ_FREQS.map((_, i) => clampEq(Array.isArray(bands) ? bands[i] : 0));
+}
+
+function ensureAudioGraph() {
+  if (audioCtx) return audioCtx;
+  const Ctx = window.AudioContext || window.webkitAudioContext;
+  if (!Ctx) return null;
+  try {
+    audioCtx = new Ctx();
+    eqSource = audioCtx.createMediaElementSource(audio);
+    eqPreampNode = audioCtx.createGain();
+    eqFilters = EQ_FREQS.map((freq) => {
+      const filter = audioCtx.createBiquadFilter();
+      filter.type = 'peaking';
+      filter.frequency.value = freq;
+      filter.Q.value = EQ_Q;
+      filter.gain.value = 0;
+      return filter;
+    });
+  } catch (e) {
+    audioCtx = null;
+    eqSource = null;
+    eqPreampNode = null;
+    eqFilters = [];
+    return null;
+  }
+  return audioCtx;
+}
+
+function applyEqValues() {
+  if (!audioCtx) return;
+  if (eqPreampNode) {
+    eqPreampNode.gain.value = Math.pow(10, clampEq(settings.eq.preamp) / 20);
+  }
+  eqFilters.forEach((filter, i) => {
+    filter.gain.value = clampEq(settings.eq.bands[i]);
+  });
+}
+
+function applyEqRouting() {
+  if (!audioCtx || !eqSource) return;
+  try { eqSource.disconnect(); } catch (e) {}
+  if (eqPreampNode) {
+    try { eqPreampNode.disconnect(); } catch (e) {}
+  }
+  eqFilters.forEach((filter) => {
+    try { filter.disconnect(); } catch (e) {}
+  });
+
+  if (!settings.eq.enabled) {
+    eqSource.connect(audioCtx.destination);
+    return;
+  }
+  let node = eqSource;
+  if (eqPreampNode) {
+    node.connect(eqPreampNode);
+    node = eqPreampNode;
+  }
+  eqFilters.forEach((filter) => {
+    node.connect(filter);
+    node = filter;
+  });
+  node.connect(audioCtx.destination);
+}
+
+/* Вызывается перед каждым play(): граф нужен только при включённом эквалайзере,
+   но контекст должен быть разбужен пользовательским жестом. */
+function ensureEqActive() {
+  if (!settings.eq.enabled) return;
+  const ctx = ensureAudioGraph();
+  if (!ctx) return;
+  if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+  applyEqValues();
+  applyEqRouting();
+}
+
+function setEqEnabled(on) {
+  const wasEnabled = settings.eq.enabled;
+  settings.eq.enabled = !!on;
+  saveSettings();
+  if (on) {
+    const ctx = ensureAudioGraph();
+    if (ctx && ctx.state === 'suspended') ctx.resume().catch(() => {});
+    applyEqValues();
+  }
+  applyEqRouting();
+  syncEqUI();
+
+  // Текущий источник загружен без CORS — перезагружаем через прокси,
+  // сохраняя позицию и состояние паузы.
+  const track = state.queue[state.queueIndex];
+  const src = audio.currentSrc || audio.src || '';
+  const proxied = /^http:\/\/127\.0\.0\.1:\d+\//.test(src);
+  if (on && !wasEnabled && track && !hls && !proxied) {
+    const position = audio.currentTime || 0;
+    const autoplay = !audio.paused;
+    playCurrent({ position, autoplay });
+  }
+
+  toast(on ? 'Эквалайзер включён' : 'Эквалайзер выключен', on);
+}
+
+function ensurePresetValid() {
+  const p = settings.eq.preset;
+  if (p === EQ_CUSTOM) return;
+  if (EQ_PRESETS[p]) return;
+  if (p && p.startsWith('custom:') && settings.eq.custom && settings.eq.custom[p.slice(7)]) return;
+  settings.eq.preset = 'flat';
+}
+
+function presetBands(value) {
+  if (value.startsWith('custom:')) {
+    const preset = settings.eq.custom && settings.eq.custom[value.slice(7)];
+    if (!preset) return null;
+    return { preamp: clampEq(preset.preamp), bands: normalizeBands(preset.bands) };
+  }
+  const builtin = EQ_PRESETS[value];
+  if (!builtin) return null;
+  return { preamp: clampEq(builtin.preamp), bands: normalizeBands(builtin.bands) };
+}
+
+function applyEqPreset(value) {
+  if (value === EQ_CUSTOM) return;
+  const preset = presetBands(value);
+  if (!preset) return;
+  settings.eq.preset = value;
+  settings.eq.preamp = preset.preamp;
+  settings.eq.bands = preset.bands;
+  saveSettings();
+  syncEqUI();
+  applyEqValues();
+  ensureEqActive();
+}
+
+/* «Сохранить» показываем только когда положение ползунков отличается от
+   выбранного пресета (или это ещё не сохранённый «Свой»). */
+function eqHasChanges() {
+  if (settings.eq.preset === EQ_CUSTOM) return true;
+  const preset = presetBands(settings.eq.preset);
+  if (!preset) return true;
+  if (clampEq(settings.eq.preamp) !== clampEq(preset.preamp)) return true;
+  return settings.eq.bands.some((value, i) => clampEq(value) !== preset.bands[i]);
+}
+
+function updateEqSaveBtn() {
+  const button = $('#eq-save');
+  if (!button) return;
+  button.classList.toggle('hidden', !eqHasChanges());
+}
+
+function markEqCustom() {
+  if (settings.eq.preset === EQ_CUSTOM) return;
+  settings.eq.preset = EQ_CUSTOM;
+  renderEqPresetOptions();
+  updateEqDeleteBtn();
+}
+
+function renderEqPresetOptions() {
+  const select = $('#eq-preset');
+  if (!select) return;
+  select.innerHTML = '';
+  Object.entries(EQ_PRESETS).forEach(([key, preset]) => {
+    const option = document.createElement('option');
+    option.value = key;
+    option.textContent = preset.title;
+    select.append(option);
+  });
+  const names = Object.keys(settings.eq.custom || {}).sort((a, b) => a.localeCompare(b, 'ru'));
+  if (names.length) {
+    const group = document.createElement('optgroup');
+    group.label = 'Свои';
+    names.forEach((name) => {
+      const option = document.createElement('option');
+      option.value = 'custom:' + name;
+      option.textContent = name;
+      group.append(option);
+    });
+    select.append(group);
+  }
+  if (settings.eq.preset === EQ_CUSTOM) {
+    const option = document.createElement('option');
+    option.value = EQ_CUSTOM;
+    option.textContent = 'Свой';
+    select.append(option);
+  }
+  select.value = settings.eq.preset;
+}
+
+function updateEqDeleteBtn() {
+  const btn = $('#eq-delete');
+  if (!btn) return;
+  btn.classList.toggle('hidden', !settings.eq.preset.startsWith('custom:'));
+}
+
+function syncEqUI() {
+  ensurePresetValid();
+  const eq = settings.eq;
+  const enabled = $('#eq-enabled');
+  if (enabled) enabled.checked = !!eq.enabled;
+  renderEqPresetOptions();
+  const preamp = $('#eq-preamp');
+  if (preamp) {
+    preamp.value = String(clampEq(eq.preamp));
+    setEqFill(preamp, eq.preamp);
+  }
+  document.querySelectorAll('#eq-bands input[type="range"]').forEach((input) => {
+    const value = clampEq(eq.bands[Number(input.dataset.band)]);
+    input.value = String(value);
+    setEqFill(input, value);
+  });
+  updateEqDeleteBtn();
+  updateEqSaveBtn();
+  const button = $('#player-eq');
+  if (button) button.classList.toggle('active', !!eq.enabled);
+}
+
+function buildEqSliders() {
+  const host = $('#eq-bands');
+  if (!host) return;
+  host.innerHTML = '';
+  EQ_FREQS.forEach((freq, index) => {
+    const wrap = document.createElement('div');
+    wrap.className = 'eq-slider';
+    const bubble = document.createElement('span');
+    bubble.className = 'eq-value';
+    const input = document.createElement('input');
+    input.type = 'range';
+    input.min = String(EQ_MIN);
+    input.max = String(EQ_MAX);
+    input.step = '0.5';
+    input.value = String(clampEq(settings.eq.bands[index]));
+    input.title = EQ_BAND_NAMES[index];
+    input.setAttribute('aria-label', EQ_BAND_NAMES[index]);
+    input.setAttribute('aria-orientation', 'vertical');
+    input.dataset.band = String(index);
+    setEqFill(input, settings.eq.bands[index]);
+    input.addEventListener('input', () => {
+      settings.eq.bands[index] = clampEq(Number(input.value));
+      markEqCustom();
+      saveSettings();
+      applyEqValues();
+      updateEqSaveBtn();
+      setEqFill(input, settings.eq.bands[index]);
+      showEqValue(wrap, settings.eq.bands[index]);
+    });
+    wrap.append(bubble, input);
+    host.append(wrap);
+  });
+}
+
+function showEqValue(wrap, value) {
+  if (!wrap) return;
+  const bubble = wrap.querySelector('.eq-value');
+  if (!bubble) return;
+  const v = Number(value);
+  const sign = v > 0 ? '+' : v < 0 ? '−' : '';
+  bubble.textContent = sign + Math.abs(v).toFixed(1).replace('.0', '') + ' дБ';
+  wrap.classList.add('show-value');
+  clearTimeout(eqValueTimer);
+  eqValueTimer = setTimeout(() => {
+    document.querySelectorAll('.eq-slider.show-value').forEach((n) => n.classList.remove('show-value'));
+  }, 900);
+}
+
+function resetEq() {
+  settings.eq.preset = 'flat';
+  settings.eq.preamp = 0;
+  settings.eq.bands = normalizeBands([]);
+  saveSettings();
+  syncEqUI();
+  applyEqValues();
+  ensureEqActive();
+}
+
+function openEqPanel() {
+  closeQueue();
+  syncEqUI();
+  $('#eq-panel').classList.remove('hidden');
+}
+
+function closeEqPanel() {
+  const panel = $('#eq-panel');
+  if (panel) panel.classList.add('hidden');
+}
+
+function openEqSaveDialog() {
+  const input = $('#eq-save-name');
+  const current = settings.eq.preset.startsWith('custom:') ? settings.eq.preset.slice(7) : '';
+  input.value = current;
+  $('#eq-save-error').classList.add('hidden');
+  $('#eq-save-ok').textContent = 'Сохранить';
+  eqSaveConfirm = '';
+  $('#eq-save-modal').classList.remove('hidden');
+  setTimeout(() => {
+    input.focus();
+    input.select();
+  }, 30);
+}
+
+function closeEqSaveDialog() {
+  $('#eq-save-modal').classList.add('hidden');
+  eqSaveConfirm = '';
+}
+
+function eqSaveError(message) {
+  const error = $('#eq-save-error');
+  error.textContent = message;
+  error.classList.remove('hidden');
+}
+
+function submitEqSave() {
+  const name = $('#eq-save-name').value.trim();
+  if (!name) {
+    eqSaveError('Введите название пресета');
+    return;
+  }
+  const reserved = Object.values(EQ_PRESETS).some(
+    (preset) => preset.title.toLowerCase() === name.toLowerCase()
+  );
+  if (reserved) {
+    eqSaveError('Это имя встроенного пресета');
+    return;
+  }
+  const current = settings.eq.preset.startsWith('custom:') ? settings.eq.preset.slice(7) : '';
+  const exists = !!(settings.eq.custom && settings.eq.custom[name]);
+  if (exists && name !== current && eqSaveConfirm !== name) {
+    eqSaveConfirm = name;
+    $('#eq-save-ok').textContent = 'Заменить';
+    eqSaveError(`Пресет «${name}» уже есть. Заменить?`);
+    return;
+  }
+
+  settings.eq.custom = settings.eq.custom || {};
+  settings.eq.custom[name] = {
+    preamp: clampEq(settings.eq.preamp),
+    bands: normalizeBands(settings.eq.bands),
+  };
+  settings.eq.preset = 'custom:' + name;
+  saveSettings();
+  closeEqSaveDialog();
+  syncEqUI();
+  applyEqValues();
+  toast(`Пресет «${name}» сохранён`, true);
+}
+
+function deleteEqPreset() {
+  const preset = settings.eq.preset;
+  if (!preset.startsWith('custom:')) return;
+  const name = preset.slice(7);
+  if (settings.eq.custom) delete settings.eq.custom[name];
+  settings.eq.preset = 'flat';
+  settings.eq.preamp = EQ_PRESETS.flat.preamp;
+  settings.eq.bands = normalizeBands(EQ_PRESETS.flat.bands);
+  saveSettings();
+  syncEqUI();
+  applyEqValues();
+  toast(`Пресет «${name}» удалён`, true);
+}
+
+function initEq() {
+  buildEqSliders();
+  syncEqUI();
+
+  $('#player-eq').addEventListener('click', (e) => {
+    e.stopPropagation();
+    if ($('#eq-panel').classList.contains('hidden')) openEqPanel();
+    else closeEqPanel();
+  });
+  $('#eq-enabled').addEventListener('change', () => setEqEnabled($('#eq-enabled').checked));
+  $('#eq-preset').addEventListener('change', () => applyEqPreset($('#eq-preset').value));
+  $('#eq-delete').addEventListener('click', deleteEqPreset);
+  $('#eq-reset').addEventListener('click', resetEq);
+  $('#eq-save').addEventListener('click', openEqSaveDialog);
+  $('#eq-save-cancel').addEventListener('click', closeEqSaveDialog);
+  $('#eq-save-ok').addEventListener('click', submitEqSave);
+  $('#eq-save-name').addEventListener('input', () => {
+    eqSaveConfirm = '';
+    $('#eq-save-ok').textContent = 'Сохранить';
+    $('#eq-save-error').classList.add('hidden');
+  });
+  $('#eq-save-name').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      submitEqSave();
+    }
+  });
+  $('#eq-save-modal').addEventListener('click', (e) => {
+    if (e.target.id === 'eq-save-modal') closeEqSaveDialog();
+  });
+
+  $('#eq-preamp').addEventListener('input', () => {
+    settings.eq.preamp = clampEq(Number($('#eq-preamp').value));
+    markEqCustom();
+    saveSettings();
+    applyEqValues();
+    updateEqSaveBtn();
+    setEqFill($('#eq-preamp'), settings.eq.preamp);
+    showEqValue($('#eq-preamp-wrap'), settings.eq.preamp);
+  });
+
+  document.addEventListener('click', (e) => {
+    const panel = $('#eq-panel');
+    if (!panel || panel.classList.contains('hidden')) return;
+    if (panel.contains(e.target)) return;
+    if ($('#eq-save-modal').contains(e.target)) return;
+    const button = $('#player-eq');
+    if (button && button.contains(e.target)) return;
+    closeEqPanel();
+  });
 }
 
 function discordStatus(track, playing) {
@@ -2108,6 +2624,7 @@ function togglePlay() {
       playCurrent();
       return;
     }
+    ensureEqActive();
     audio.play().catch(e => {
       if (e.name !== 'AbortError') {
         toast('Не удалось начать воспроизведение');
@@ -2235,7 +2752,10 @@ $('#volume').style.setProperty('--volume-progress', settings.volume + '%');
 
 if (navigator.mediaSession) {
   const ms = navigator.mediaSession;
-  ms.setActionHandler('play', () => audio.play());
+  ms.setActionHandler('play', () => {
+    ensureEqActive();
+    audio.play();
+  });
   ms.setActionHandler('pause', () => audio.pause());
   ms.setActionHandler('previoustrack', prev);
   ms.setActionHandler('nexttrack', next);
@@ -2276,6 +2796,7 @@ function toggleQueue() {
 }
 
 function openQueue() {
+  closeEqPanel();
   renderQueue();
   $('#queue-panel').classList.remove('hidden');
   centerQueueOnCurrent();
@@ -2433,4 +2954,15 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
+/* Escape закрывает диалог сохранения пресета и панель эквалайзера. */
+document.addEventListener('keydown', (e) => {
+  if (captureHotkey || e.key !== 'Escape') return;
+  if (!$('#eq-save-modal').classList.contains('hidden')) {
+    closeEqSaveDialog();
+    return;
+  }
+  if (!$('#eq-panel').classList.contains('hidden')) closeEqPanel();
+});
+
+initEq();
 init();

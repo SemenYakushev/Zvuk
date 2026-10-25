@@ -139,6 +139,21 @@ pub async fn get_stream(state: State<'_, AppState>, ids: Vec<String>) -> Result<
     api.stream(&ids).await.map_err(|e| e.to_string())
 }
 
+/* Обёртка ссылки трека в локальный прокси: нужна только эквалайзеру,
+   потому что CDN не отдаёт CORS для подписанных ссылок. */
+#[tauri::command]
+pub fn stream_proxy(state: State<'_, AppState>, url: String) -> Result<String, String> {
+    if state.proxy_port == 0 {
+        return Err("Локальный прокси не запустился".into());
+    }
+    Ok(format!(
+        "http://127.0.0.1:{}/media?t={}&u={}",
+        state.proxy_port,
+        state.proxy_token,
+        urlencoding::encode(&url)
+    ))
+}
+
 #[tauri::command]
 pub async fn get_tracks(state: State<'_, AppState>, ids: Vec<String>) -> Result<Value, String> {
     let api = api_from_state(&state)?;
