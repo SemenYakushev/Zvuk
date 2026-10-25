@@ -16,6 +16,7 @@ const audio = $('#audio');
 
 const state = {
   view: 'search',
+  sourceReady: false,
   queue: [],
   queueIndex: -1,
   streams: new Map(),
@@ -197,11 +198,16 @@ function markActive(view) {
   });
 }
 
-let timer;
+/* В v1.0.2b тело функции по ошибке заменили на «// ...», из-за чего тосты
+   не показывались, а таймер падал с ReferenceError: el is not defined. */
+let toastTimer;
 function toast(msg, ok = false) {
-  // ...
-  clearTimeout(timer);
-  timer = setTimeout(() => el.classList.add('hidden'), 3200);
+  const el = $('#toast');
+  el.textContent = msg;
+  el.style.color = ok ? 'var(--accent)' : 'var(--text)';
+  el.classList.remove('hidden');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.add('hidden'), 3200);
 }
 
 function setLoginStatus(msg, ok = false) {
@@ -1714,6 +1720,7 @@ function setupSource(url) {
   audio.pause();
   audio.removeAttribute('src');
   audio.load();
+  state.sourceReady = false;
 
   const isHls = /\.m3u8($|\?)/i.test(url);
   if (isHls && window.Hls && Hls.isSupported()) {
@@ -1733,6 +1740,7 @@ function setupSource(url) {
   } else {
     audio.src = url;
   }
+  state.sourceReady = true;
 }
 
 function updatePlayerUI(track) {
@@ -1886,6 +1894,13 @@ function togglePlay() {
   if (audio.paused) {
     if (isBlocked(state.queue[state.queueIndex])) {
       toast('Трек с ненормативной лексикой отключён в настройках');
+      return;
+    }
+    // после запуска приложения в плеере восстановлен только трек, поток ещё
+    // не загружен — просим playCurrent(), иначе play() нечего играть
+    const track = state.queue[state.queueIndex];
+    if (!state.sourceReady && track) {
+      playCurrent();
       return;
     }
     audio.play().catch(e => {
