@@ -19,6 +19,7 @@ const state = {
   sourceReady: false,
   playOrder: [],
   orderPos: -1,
+  screen: { kind: 'view', view: 'search', id: null },
   queue: [],
   queueIndex: -1,
   streams: new Map(),
@@ -265,6 +266,7 @@ async function enterApp() {
     
   }
   restoreLastState();
+  resetNav();
   showView('home');
 }
 
@@ -378,6 +380,8 @@ async function logout() {
   audio.load();
   localStorage.removeItem(LAST_KEY);
   closeQueue();
+  resetNav();
+  state.screen = { kind: 'view', view: 'search', id: null };
   $('#search-input').value = '';
   state.lastSearchData = null;
   showLogin();
@@ -402,32 +406,267 @@ if (window.__TAURI__ && window.__TAURI__.event) {
 
 document.querySelectorAll('.nav-item').forEach((item) => {
   item.addEventListener('click', () => {
-    showView(item.dataset.view);
+    navigate({ kind: 'view', view: item.dataset.view });
   });
 });
 
-function showView(view) {
+$('#nav-back').addEventListener('click', () => goBack());
+$('#nav-fwd').addEventListener('click', () => goForward());
+
+/* ============================ История навигации ============================
+   Один массив + указатель, как в браузере. Каждая запись описывает показанный
+   экран, а пока экран не на виду — держит снимок его DOM. Поэтому «назад» и
+   «вперёд» не ходят в API и не сбрасывают прокрутку.
+
+   Инвариант: nav[navIndex] — текущий экран (снимка у него нет, он снимается в
+   момент ухода). Левее — прошлое, правее — будущее. */
+const MAX_NAV = 12;
+const MAX_SNAPSHOT_ROWS = 300;
+const nav = [];
+let navIndex = -1;
+let navBusy = false;
+
+function viewIs(view) {
+  return state.screen.kind === 'view' && state.screen.view === view;
+}
+
+function screenIs(kind, id) {
+  return state.screen.kind === kind && String(state.screen.id) === String(id);
+}
+
+function screenEntry(descriptor) {
+  return {
+    kind: descriptor.kind,
+    id: descriptor.id != null ? String(descriptor.id) : null,
+    view: descriptor.view || state.view,
+    query: $('#search-input').value.trim(),
+    scroll: 0,
+    nodes: null,
+    searchData: null,
+  };
+}
+
+/* Снимает DOM текущего экрана в запись истории. Если строк слишком много,
+   снимок не делаем: такой экран при возврате отрисуется заново (для поиска —
+   всё равно из state.lastSearchData, без запроса). */
+function captureScreen(entry) {
+  const content = $('#content');
+  entry.kind = state.screen.kind;
+  entry.id = state.screen.id;
+  entry.view = state.view;
+  entry.scroll = content.scrollTop;
+  if (state.screen.kind === 'view' && state.screen.view === 'search') {
+    entry.searchData = state.lastSearchData;
+    entry.query = state.lastSearch || entry.query || '';
+  } else {
+    entry.searchData = null;
+  }
+  entry.nodes = null;
+
+  // экран ещё грузится: снимок спиннера бесполезен, восстановим по описанию
+  if (!content.children.length || content.querySelector('.spinner')) {
+    content.innerHTML = '';
+    return false;
+  }
+  const rows = content.querySelectorAll('.track-row, .card').length;
+  if (rows > MAX_SNAPSHOT_ROWS) {
+    content.innerHTML = '';
+    return false;
+  }
+  const frag = document.createDocumentFragment();
+  while (content.firstChild) frag.append(content.firstChild);
+  entry.nodes = frag;
+  return true;
+}
+
+function updateNavButtons() {
+  const back = $('#nav-back');
+  const fwd = $('#nav-fwd');
+  if (!back || !fwd) return;
+  back.disabled = navIndex <= 0;
+  fwd.disabled = navIndex < 0 || navIndex >= nav.length - 1;
+}
+
+function resetNav() {
+  nav.length = 0;
+  navIndex = -1;
+  updateNavButtons();
+}
+
+async function renderScreen(to, opts = {}) {
+  if (to.kind === 'view') return showView(to.view, opts);
+  if (to.kind === 'artist') return openArtist(to.id);
+  if (to.kind === 'release') return openRelease(to.id);
+  if (to.kind === 'playlist') return openPlaylist(to.id);
+}
+
+async function navigate(to) {
+  if (navBusy) return false;
+  // клик по уже открытому разделу — просто обновляем его, историю не трогаем
+  if (
+    to.kind === 'view' &&
+    state.screen.kind === 'view' &&
+    state.screen.view === to.view
+  ) {
+    await showView(to.view, { focus: true });
+    return false;
+  }
+
+  navBusy = true;
+  try {
+    const content = $('#content');
+    if (content.children.length) {
+      content.classList.add('fade-out');
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      content.classList.remove('fade-out');
+    }
+    if (navIndex >= 0) {
+      captureScreen(nav[navIndex]);
+    } else {
+      const entry = screenEntry(state.screen);
+      captureScreen(entry);
+      nav.push(entry);
+      navIndex = 0;
+    }
+    nav.length = navIndex + 1; // после нового перехода «вперёд» идти некуда
+
+    const dest = screenEntry(to);
+    nav.push(dest);
+    navIndex = nav.length - 1;
+    while (nav.length > MAX_NAV) {
+      nav.shift();
+      navIndex--;
+    }
+    await renderScreen(dest, { focus: true });
+    updateNavButtons();
+    return true;
+  } finally {
+    navBusy = false;
+  }
+}
+
+async function restoreScreen(entry) {
+  const content = $('#content');
+  state.view = entry.view || 'home';
+  state.screen = { kind: entry.kind, id: entry.id, view: entry.view };
+  markActive(state.view);
+  $('#search-input').value = entry.query || '';
+
+  if (entry.kind === 'view' && entry.view === 'search') {
+    state.lastSearch = entry.query || '';
+    state.lastSearchData = entry.searchData || null;
+  }
+
+  if (entry.nodes) {
+    content.innerHTML = '';
+    content.append(entry.nodes);
+    entry.nodes = null;
+    content.classList.add('fade-in');
+    setTimeout(() => content.classList.remove('fade-in'), 500);
+  } else {
+    await renderScreen(entry);
+  }
+
+  // прокрутку возвращаем мгновенно: у .content включён smooth
+  const behavior = content.style.scrollBehavior;
+  content.style.scrollBehavior = 'auto';
+  content.scrollTop = entry.scroll || 0;
+  content.style.scrollBehavior = behavior;
+
+  syncLikeButtons();
+  updateTrackIndicators();
+}
+
+async function goBack() {
+  if (navBusy || navIndex <= 0) return;
+  navBusy = true;
+  try {
+    captureScreen(nav[navIndex]);
+    navIndex--;
+    await restoreScreen(nav[navIndex]);
+  } finally {
+    navBusy = false;
+  }
+  updateNavButtons();
+}
+
+async function goForward() {
+  if (navBusy || navIndex < 0 || navIndex >= nav.length - 1) return;
+  navBusy = true;
+  try {
+    captureScreen(nav[navIndex]);
+    navIndex++;
+    await restoreScreen(nav[navIndex]);
+  } finally {
+    navBusy = false;
+  }
+  updateNavButtons();
+}
+
+/* Заменяет текущий экран, не добавляя шаг истории (например, плейлист
+   удалён — возвращаться на него нельзя). */
+async function replaceCurrent(to) {
+  const entry = screenEntry(to);
+  if (navIndex >= 0) {
+    nav.length = navIndex + 1;
+    nav[navIndex] = entry;
+  } else {
+    nav.length = 0;
+    nav.push(entry);
+    navIndex = 0;
+  }
+  await renderScreen(entry);
+  updateNavButtons();
+}
+
+/* Сбрасывает снимки экранов, данные которых устарели после изменения. */
+function invalidateNavScreens(pred) {
+  for (const entry of nav) {
+    if (entry && entry.nodes && pred(entry)) entry.nodes = null;
+  }
+}
+
+/* Полностью убирает экраны из истории (например, удалённый плейлист).
+   Текущую запись не трогает — её заменяет replaceCurrent(). */
+function dropNavScreens(pred) {
+  for (let i = nav.length - 1; i > navIndex; i--) {
+    if (pred(nav[i])) nav.splice(i, 1);
+  }
+  for (let i = navIndex - 1; i >= 0; i--) {
+    if (pred(nav[i])) {
+      nav.splice(i, 1);
+      navIndex--;
+    }
+  }
+  updateNavButtons();
+}
+
+async function showView(view, opts = {}) {
   state.view = view;
+  state.screen = { kind: 'view', view, id: null };
   document
     .querySelectorAll('.nav-item[data-view="settings"]')
     .forEach((n) => n.classList.remove('active'));
   markActive(view);
-  
+
   if (view === 'home') {
-    renderContent(renderHomeContent);
-  } else if (view === 'search') {
+    return renderContent(renderHomeContent);
+  }
+  if (view === 'search') {
+    if (opts.focus !== false) $('#search-input').focus();
     if (state.lastSearchData) {
-      renderContent(renderSearchResultsContent, state.lastSearchData);
-    } else {
-      renderContent(renderPlaceholderContent, '🔎', 'Начните вводить запрос, чтобы найти треки, артистов, альбомы и плейлисты');
+      return renderContent(renderSearchResultsContent, state.lastSearchData);
     }
-    $('#search-input').focus();
-  } else if (view === 'library') {
-    renderContent(loadLibraryContent);
-  } else if (view === 'playlists') {
-    renderContent(loadPlaylistsContent);
-  } else if (view === 'settings') {
-    renderContent(renderSettingsContent);
+    return renderContent(renderPlaceholderContent, '🔎', 'Начните вводить запрос, чтобы найти треки, артистов, альбомы и плейлисты');
+  }
+  if (view === 'library') {
+    return renderContent(loadLibraryContent);
+  }
+  if (view === 'playlists') {
+    return renderContent(loadPlaylistsContent);
+  }
+  if (view === 'settings') {
+    return renderContent(renderSettingsContent);
   }
 }
 
@@ -477,11 +716,13 @@ async function renderHomeContent() {
 
   try {
     const coll = await invoke('user_collection');
+    if (!viewIs('home')) return;
     const ids = ((coll && coll.collection && coll.collection.artists) || [])
       .map((a) => a.id)
       .filter(Boolean);
     if (ids.length) {
       const data = await invoke('get_artists', { ids });
+      if (!viewIs('home')) return;
       const arts = ((data && data.getArtists) || []).filter((a) => a && a.id);
       aGrid.append(...arts.map(artistWaveCard));
     } else {
@@ -627,7 +868,7 @@ function artistWaveCard(a) {
     startArtistWave(a.id, a.title);
   });
   card.append(img, t, sub, play);
-  card.addEventListener('click', () => openArtist(a.id));
+  card.addEventListener('click', () => navigate({ kind: 'artist', id: a.id }));
   return card;
 }
 
@@ -875,8 +1116,13 @@ function doSearch(query) {
       const data = await invoke('search', { query: q, limit: 12 });
       state.lastSearch = q;
       state.lastSearchData = data;
-      markActive('search');
-      renderContent(renderSearchResultsContent, data);
+      if (state.screen.kind === 'view' && state.screen.view === 'search') {
+        state.view = 'search';
+        markActive('search');
+        renderContent(renderSearchResultsContent, data);
+      } else {
+        await navigate({ kind: 'view', view: 'search' });
+      }
     } catch (e) {
       renderErrorContent(e);
     } finally {
@@ -890,10 +1136,14 @@ $('#search-input').addEventListener('input', () => {
   if (!q) {
     state.lastSearch = '';
     state.lastSearchData = null;
-    renderContent(renderPlaceholderContent,
-      '🔎',
-      'Начните вводить запрос, чтобы найти треки, артистов, альбомы и плейлисты'
-    );
+    if (state.screen.kind === 'view' && state.screen.view === 'search') {
+      renderContent(renderPlaceholderContent,
+        '🔎',
+        'Начните вводить запрос, чтобы найти треки, артистов, альбомы и плейлисты'
+      );
+    } else {
+      navigate({ kind: 'view', view: 'search' });
+    }
     return;
   }
   doSearch(q);
@@ -952,6 +1202,7 @@ async function loadLibraryContent() {
   
   try {
     const [tracksData, coll] = await Promise.all([invoke('user_tracks'), invoke('user_collection')]);
+    if (!viewIs('library')) return;
     const trackIds = ((tracksData && tracksData.collection && tracksData.collection.tracks) || [])
       .map((t) => t.id)
       .filter(Boolean);
@@ -1023,6 +1274,7 @@ async function loadPlaylistsContent() {
   
   try {
     const pd = await invoke('user_playlists');
+    if (!viewIs('playlists')) return;
     const ids = ((pd && pd.collection && pd.collection.playlists) || [])
       .map((p) => p.id)
       .filter(Boolean);
@@ -1356,6 +1608,11 @@ async function addToPlaylist(playlistId, title) {
       id: String(playlistId),
       items: [{ type: 'track', item_id: modalState.track.id }],
     });
+    invalidateNavScreens(
+      (e) =>
+        (e.kind === 'playlist' && String(e.id) === String(playlistId)) ||
+        (e.kind === 'view' && e.view === 'playlists')
+    );
     toast(`Добавлено в «${title}»`, true);
     closeModal();
   } catch (e) {
@@ -1375,8 +1632,10 @@ $('#modal-new-btn').addEventListener('click', async () => {
     await invoke('create_playlist', { name, items });
     toast(`Плейлист «${name}» создан`, true);
     closeModal();
-    if (state.view === 'playlists')
+    invalidateNavScreens((e) => e.kind === 'view' && e.view === 'playlists');
+    if (state.screen.kind === 'view' && state.screen.view === 'playlists') {
       renderContent(loadPlaylistsContent);
+    }
   } catch (e) {
     toast(String(e));
   }
@@ -1387,11 +1646,13 @@ $('#playlist-modal').addEventListener('click', (e) => {
 });
 
 async function openPlaylist(id) {
+  state.screen = { kind: 'playlist', id: String(id), view: state.view };
   const content = $('#content');
   content.innerHTML = '';
   content.append(spinnerBlock());
   try {
     const data = await invoke('get_playlists', { ids: [String(id)] });
+    if (!screenIs('playlist', id)) return;
     const pl = (data && data.playlists && data.playlists[0]) || null;
     if (!pl || !pl.id) {
       renderContent(renderErrorContent, 'Плейлист не найден');
@@ -1399,17 +1660,20 @@ async function openPlaylist(id) {
     }
     renderDetail(content, { kind: 'playlist', item: pl });
   } catch (e) {
+    if (!screenIs('playlist', id)) return;
     content.innerHTML = '';
     renderContent(renderErrorContent, e);
   }
 }
 
 async function openRelease(id) {
+  state.screen = { kind: 'release', id: String(id), view: state.view };
   const content = $('#content');
   content.innerHTML = '';
   content.append(spinnerBlock());
   try {
     const data = await invoke('get_releases', { ids: [String(id)], withTracks: true });
+    if (!screenIs('release', id)) return;
     const rel = (data && data.getReleases && data.getReleases[0]) || null;
     if (!rel || !rel.id) {
       renderContent(renderErrorContent, 'Альбом не найден');
@@ -1417,6 +1681,7 @@ async function openRelease(id) {
     }
     renderDetail(content, { kind: 'release', item: rel });
   } catch (e) {
+    if (!screenIs('release', id)) return;
     content.innerHTML = '';
     renderContent(renderErrorContent, e);
   }
@@ -1501,8 +1766,12 @@ function renderDetail(content, { kind, item }) {
       try {
         await invoke('delete_playlist', { id: String(item.id) });
         toast('Плейлист удалён', true);
-        showView('playlists');
-        renderContent(loadPlaylistsContent);
+        // на удалённый плейлист возвращаться нельзя — чистим историю
+        dropNavScreens(
+          (e) => e.kind === 'playlist' && String(e.id) === String(item.id)
+        );
+        invalidateNavScreens((e) => e.kind === 'view' && e.view === 'playlists');
+        await replaceCurrent({ kind: 'view', view: 'playlists' });
       } catch (e) {
         toast(String(e));
       }
@@ -1540,6 +1809,11 @@ async function removeFromPlaylist(playlist, track) {
       name: playlist.title || '',
     });
     toast(`Удалено из «${playlist.title || ''}»`, true);
+    invalidateNavScreens(
+      (e) =>
+        (e.kind === 'playlist' && String(e.id) === String(playlist.id)) ||
+        (e.kind === 'view' && e.view === 'playlists')
+    );
     openPlaylist(playlist.id);
   } catch (e) {
     toast(String(e));
@@ -1549,6 +1823,7 @@ async function removeFromPlaylist(playlist, track) {
 
 
 async function openArtist(id) {
+  state.screen = { kind: 'artist', id: String(id), view: state.view };
   const content = $('#content');
   content.innerHTML = '';
   content.append(spinnerBlock());
@@ -1560,6 +1835,7 @@ async function openArtist(id) {
       withRelated: true,
       withDesc: true,
     });
+    if (!screenIs('artist', id)) return;
     const a = (data && data.getArtists && data.getArtists[0]) || null;
     if (!a || !a.id) {
       content.innerHTML = '';
@@ -1633,6 +1909,7 @@ async function openArtist(id) {
       content.append(sec);
     }
   } catch (e) {
+    if (!screenIs('artist', id)) return;
     content.innerHTML = '';
     renderContent(renderErrorContent, e);
   }
@@ -1654,7 +1931,7 @@ function playlistCard(p) {
   sub.className = 'card-sub';
   sub.textContent = p.tracks && p.tracks.length ? `${p.tracks.length} треков` : 'Плейлист';
   card.append(img, t, sub);
-  card.addEventListener('click', () => openPlaylist(p.id));
+  card.addEventListener('click', () => navigate({ kind: 'playlist', id: p.id }));
   return card;
 }
 
@@ -1672,7 +1949,7 @@ function releaseCard(r) {
   sub.className = 'card-sub';
   sub.textContent = artistString(r) || 'Альбом';
   card.append(img, t, sub);
-  card.addEventListener('click', () => openRelease(r.id));
+  card.addEventListener('click', () => navigate({ kind: 'release', id: r.id }));
   return card;
 }
 
@@ -1690,7 +1967,7 @@ function artistCard(a) {
   sub.className = 'card-sub';
   sub.textContent = 'Артист';
   card.append(img, t, sub);
-  card.addEventListener('click', () => openArtist(a.id));
+  card.addEventListener('click', () => navigate({ kind: 'artist', id: a.id }));
   return card;
 }
 
@@ -1715,6 +1992,10 @@ async function toggleLike(track, btn) {
       state.liked.add(id);
     }
     syncLikeButtons();
+    // списки «Моя музыка» и «Главное» в истории устарели
+    invalidateNavScreens(
+      (e) => e.kind === 'view' && (e.view === 'library' || e.view === 'home')
+    );
   } catch (e) {
     toast(String(e));
   }
@@ -2954,14 +3235,39 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
-/* Escape закрывает диалог сохранения пресета и панель эквалайзера. */
+/* Навигация с клавиатуры: Alt+←/→ как в браузере, Escape — назад
+   (но сначала закрывает диалог, модалку, очередь и панель эквалайзера). */
 document.addEventListener('keydown', (e) => {
-  if (captureHotkey || e.key !== 'Escape') return;
-  if (!$('#eq-save-modal').classList.contains('hidden')) {
-    closeEqSaveDialog();
+  if (captureHotkey) return;
+  if (e.altKey && e.key === 'ArrowLeft') {
+    e.preventDefault();
+    goBack();
     return;
   }
-  if (!$('#eq-panel').classList.contains('hidden')) closeEqPanel();
+  if (e.altKey && e.key === 'ArrowRight') {
+    e.preventDefault();
+    goForward();
+    return;
+  }
+  if (e.key === 'Escape') {
+    if (!$('#eq-save-modal').classList.contains('hidden')) {
+      closeEqSaveDialog();
+      return;
+    }
+    if (!$('#playlist-modal').classList.contains('hidden')) {
+      closeModal();
+      return;
+    }
+    if (!$('#queue-panel').classList.contains('hidden')) {
+      closeQueue();
+      return;
+    }
+    if (!$('#eq-panel').classList.contains('hidden')) {
+      closeEqPanel();
+      return;
+    }
+    goBack();
+  }
 });
 
 initEq();

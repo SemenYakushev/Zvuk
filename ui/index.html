@@ -89,6 +89,18 @@
     
     <main class="main">
       <header class="topbar">
+        <div class="nav-arrows">
+          <button id="nav-back" class="nav-arrow" title="Назад (Alt+←)" aria-label="Назад" disabled>
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+              <path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/>
+            </svg>
+          </button>
+          <button id="nav-fwd" class="nav-arrow" title="Вперёд (Alt+→)" aria-label="Вперёд" disabled>
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+              <path d="M12 4l-1.41 1.41L16.17 11H4v2h12.17l-5.58 5.59L12 20l8-8z"/>
+            </svg>
+          </button>
+        </div>
         <div class="search-wrap">
           <svg class="search-icon" viewBox="0 0 24 24"><path d="M15.5 14h-.79l-.28-.27a6.5 6.5 0 1 0-.7.7l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0A4.5 4.5 0 1 1 14 9.5 4.5 4.5 0 0 1 9.5 14z"/></svg>
           <input id="search-input" type="text" placeholder="Треки, артисты, альбомы, плейлисты..." autocomplete="off" spellcheck="false" />
