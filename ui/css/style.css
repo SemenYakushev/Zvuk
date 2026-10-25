@@ -896,13 +896,39 @@ body {
   border: 1px solid rgba(255, 255, 255, 0.03);
   transition: var(--transition);
   opacity: 0;
-  transform: translateY(16px) scale(0.98);
-  transition: all 0.5s cubic-bezier(0.2, 0.8, 0.2, 1);
+  animation: cardFadeIn 0.4s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
 }
 
-.card.visible {
-  opacity: 1;
-  transform: translateY(0) scale(1);
+@keyframes cardFadeIn {
+  from {
+    opacity: 0;
+    translate: 0 14px;
+  }
+  to {
+    opacity: 1;
+    translate: 0 0;
+  }
+}
+
+.card:nth-child(1)  { animation-delay: 0.00s; }
+.card:nth-child(2)  { animation-delay: 0.03s; }
+.card:nth-child(3)  { animation-delay: 0.06s; }
+.card:nth-child(4)  { animation-delay: 0.09s; }
+.card:nth-child(5)  { animation-delay: 0.12s; }
+.card:nth-child(6)  { animation-delay: 0.15s; }
+.card:nth-child(7)  { animation-delay: 0.18s; }
+.card:nth-child(8)  { animation-delay: 0.21s; }
+.card:nth-child(9)  { animation-delay: 0.24s; }
+.card:nth-child(10) { animation-delay: 0.27s; }
+.card:nth-child(11) { animation-delay: 0.30s; }
+.card:nth-child(12) { animation-delay: 0.33s; }
+
+@media (prefers-reduced-motion: reduce) {
+  .card {
+    animation: none;
+    opacity: 1;
+    translate: none;
+  }
 }
 
 .card:hover {
@@ -2027,6 +2053,7 @@ input[type="range"]:hover::-webkit-slider-thumb {
 ::-webkit-scrollbar-track {
   background: transparent;
 }
+
 /* ---------- Метка explicit (E) и блокировка таких треков ---------- */
 
 /* Маленький квадрат после названия трека. Стоит в flex-обёртке рядом с
@@ -2087,4 +2114,17 @@ input[type="range"]:hover::-webkit-slider-thumb {
 .queue-row.blocked:hover {
   background: transparent;
   border-color: transparent;
+}
+
+/* Заглушка для обложек без картинки (или с битым URL).
+   Класс img-stub вешает setImage() в app.js. Правило намеренно стоит в конце
+   файла: у .track-cover / .detail-cover / .player-cover / .queue-row img /
+   .modal-playlist-item img задан шорткат background, который сбрасывает
+   background-image, и при равной специфичности выигрывает тот, кто ниже. */
+img.img-stub {
+  background-image: url('../assets/placeholder.svg');
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 45%;
+  object-fit: contain;
 }
